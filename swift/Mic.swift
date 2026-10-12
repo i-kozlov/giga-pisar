@@ -12,12 +12,14 @@
 // и начало фразы не съедается.
 
 import AVFoundation
+import CoreAudio
 
 final class Mic {
     /// Движок живёт между записями: повторный старт заметно быстрее первого.
     /// Микрофон между записями НЕ открыт (оранжевой точки нет) — устройство
     /// включается только на время start()…stop().
     private var engine: AVAudioEngine?
+    private var engineDevice: AudioDeviceID = 0 // default input the cached engine was built on
     private var configurationChanged = false
     private var chunks: [[Float]] = []   // куски записи в родной частоте, моно
     private var nativeRate: Double = 0
@@ -73,11 +75,41 @@ final class Mic {
             forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            self.audioQueue.async {
-                if self.engineActive { self.configurationChanged = true }
-                else { self.engine = nil }
+            self.audioQueue.async { self.dropEngine() }
+        }
+        // The engine reports configuration changes only while it runs, and
+        // between recordings it is stopped. A microphone that vanished and
+        // came back while idle (a monitor's USB hub powered down with the
+        // display, a headset switched off) went unnoticed, and the cached
+        // engine stayed bound to the dead device until relaunch. CoreAudio
+        // tells us about the device list and the default input at any time.
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        for selector in [kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDevices] {
+            var addr = AudioObjectPropertyAddress(mSelector: selector,
+                                                  mScope: kAudioObjectPropertyScopeGlobal,
+                                                  mElement: kAudioObjectPropertyElementMain)
+            AudioObjectAddPropertyListenerBlock(system, &addr, audioQueue) { [weak self] _, _ in
+                self?.dropEngine()
             }
         }
+    }
+
+    /// The cached engine no longer matches the hardware: rebuild it on the
+    /// next start, or right after the current recording ends. audioQueue only.
+    private func dropEngine() {
+        if engineActive { configurationChanged = true }
+        else { engine = nil }
+    }
+
+    private static func defaultInputDevice() -> AudioDeviceID {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let err = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
+                                             0, nil, &size, &device)
+        return err == noErr ? device : 0
     }
 
     /// Запускает запись. Бросает, если устройство не завелось, — тогда
@@ -104,6 +136,21 @@ final class Mic {
     }
 
     private func startEngine() throws {
+        let device = Self.defaultInputDevice()
+        if engine != nil, device != engineDevice { engine = nil }
+        do { try startEngine(on: device) } catch {
+            // A cached engine can hold a device that is gone even when no
+            // notification arrived, and a fresh one can catch CoreAudio
+            // mid-switch right after a device vanished. Retry once from
+            // scratch a moment later before telling the user it failed.
+            NSLog("Гига Писарь: audio engine failed to start, rebuilding: \(error)")
+            engine = nil
+            Thread.sleep(forTimeInterval: 0.2)
+            try startEngine(on: Self.defaultInputDevice())
+        }
+    }
+
+    private func startEngine(on device: AudioDeviceID) throws {
         let e = engine ?? AVAudioEngine()
         let input = e.inputNode
         let fmt = input.inputFormat(forBus: 0) // родной формат устройства
@@ -162,6 +209,7 @@ final class Mic {
             throw error
         }
         engine = e
+        engineDevice = device
         engineActive = true
     }
 
@@ -192,15 +240,17 @@ final class Mic {
         e.inputNode.removeTap(onBus: 0)
         e.stop() // сам движок оставляем — следующий старт быстрее
         engineActive = false
-        if configurationChanged {
-            engine = nil
-            configurationChanged = false
-        }
         lock.lock()
         let recorded = chunks
         chunks = []
         levelPeak = 0; levelHeld = 0; levelSeen = false // микрофон закрыт — волне показывать нечего
         lock.unlock()
+        // Not a single buffer arrived: the engine ran on a device that is
+        // no longer delivering sound. Never reuse it.
+        if configurationChanged || recorded.isEmpty {
+            engine = nil
+            configurationChanged = false
+        }
         let native = recorded.flatMap { $0 }
         return Self.resample(native, from: nativeRate, to: 16000)
     }
