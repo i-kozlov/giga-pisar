@@ -1,17 +1,17 @@
 {
-  "version": "3.9.6",
+  "version": "3.9.7",
   "downloads": [
-    "https://gitflic.ru/project/moznoazachem/giga/release/477b74b8-4adc-4bdf-a964-95564a5f2b02/8722f5fa-fe40-43cc-986d-c4a0c362c74f/download",
-    "https://github.com/moznoazachem/giga-pisar/releases/download/v3.9.6/GigaPisar-3.9.6.zip"
+    "https://gitflic.ru/project/moznoazachem/giga/release/6ee4beaf-2985-4ab6-847d-9e0e3b51fba5/a83d2868-e51b-4cf2-9c78-0bb7fedfb5c4/download",
+    "https://github.com/moznoazachem/giga-pisar/releases/download/v3.9.7/GigaPisar-3.9.7.zip"
   ],
   "notes": {
     "ru": [
-      "Новое окно первого запуска: семь коротких шагов, от модели и доступов до проверки диктовки",
-      "Если загрузка модели сорвалась, можно попробовать снова, не перезапуская Писаря"
+      "Диктовка больше не замолкает, если микрофон пропал и вернулся: погас монитор со своим микрофоном, отключилась гарнитура",
+      "Если микрофон не запустился с первого раза, Писарь сам пробует ещё раз"
     ],
     "en": [
-      "A new first-run window: seven short steps, from the model and permissions to a dictation check",
-      "If the model download fails, you can try again without restarting Pisar"
+      "Dictation no longer goes silent after the microphone disappears and comes back, like a sleeping monitor mic or a disconnected headset",
+      "If the microphone fails to start, Pisar retries on its own"
     ]
   }
 }
