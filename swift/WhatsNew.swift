@@ -8,11 +8,11 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Новое окно первого запуска: семь коротких шагов, от модели и доступов до проверки диктовки",
-    "Если загрузка модели сорвалась, можно попробовать снова, не перезапуская Писаря",
+    "Диктовка больше не замолкает, если микрофон пропал и вернулся: погас монитор со своим микрофоном, отключилась гарнитура",
+    "Если микрофон не запустился с первого раза, Писарь сам пробует ещё раз",
 ] : [
-    "A new first-run window: seven short steps, from the model and permissions to a dictation check",
-    "If the model download fails, you can try again without restarting Pisar",
+    "Dictation no longer goes silent after the microphone disappears and comes back, like a sleeping monitor mic or a disconnected headset",
+    "If the microphone fails to start, Pisar retries on its own",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
