@@ -354,6 +354,13 @@ final class WaveView: NSView {
 
     static let textFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
+    /// Hands-free recording: a lock on the left and the elapsed time on the
+    /// right, so it is clear the key may be released and how long it runs.
+    var lockedSince: Date? {
+        didSet { if lockedSince != oldValue { needsDisplay = true } }
+    }
+    static let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+
     /// Пока мозг работает, по надписи бежит блик: сообщение висит
     /// секундами, и неподвижная строка выглядит зависшей.
     var shimmer = false { didSet { if shimmer != oldValue { needsDisplay = true } } }
@@ -603,6 +610,21 @@ final class WaveView: NSView {
             return
         }
 
+        // Hands-free: lock | bars | time. The bars keep their usual width.
+        var area = bounds
+        if let since = lockedSince {
+            let lock = NSRect(x: 6, y: 0, width: 16, height: bounds.height)
+            drawLock(in: lock)
+            area = NSRect(x: 18, y: 0, width: Self.barsAreaWidth, height: bounds.height)
+            let secs = max(0, Int(Date().timeIntervalSince(since)))
+            let time = NSAttributedString(
+                string: String(format: "%d:%02d", secs / 60, secs % 60),
+                attributes: [.font: Self.timeFont,
+                             .foregroundColor: NSColor.black.withAlphaComponent(0.5)])
+            let tsz = time.size()
+            time.draw(at: NSPoint(x: area.maxX - 2, y: (bounds.height - tsz.height) / 2))
+        }
+
         let bars = heights.count
         // 13 столбиков: 2,5 пункта ширины с зазором 1,5, поля по краям
         // почти по девять. Шире ряд делать некуда — крайний столбик
@@ -610,7 +632,7 @@ final class WaveView: NSView {
         let barW: CGFloat = 2.5
         let gap: CGFloat = 1.5
         let totalW = CGFloat(bars) * barW + CGFloat(bars - 1) * gap
-        let x0 = (bounds.width - totalW) / 2
+        let x0 = area.minX + (area.width - totalW) / 2
         // Полей сверху и снизу — по пункту: столбик на всплеске должен
         // выстреливать во всю плашку, иначе размах пропадает даром.
         let maxH = bounds.height - 2
@@ -635,6 +657,19 @@ final class WaveView: NSView {
                            y: (bounds.height - h) / 2, width: barW, height: h)
             NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
         }
+    }
+
+    /// Width of the bars area, the same as the plain wave pill.
+    static let barsAreaWidth: CGFloat = 68
+
+    private func drawLock(in r: NSRect) {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+            .applying(.init(paletteColors: [.systemBlue]))
+        guard let img = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return }
+        let s = img.size
+        img.draw(in: NSRect(x: r.midX - s.width / 2, y: r.midY - s.height / 2,
+                            width: s.width, height: s.height))
     }
 }
 
@@ -734,14 +769,16 @@ final class WavePanel {
     }
 
     /// Размер плашки: у волны свой, у текста — по длине надписи.
-    private static let barsSize = NSSize(width: 68, height: 26)
+    private static let plainBarsSize = NSSize(width: 68, height: 26)
+    private static let lockedBarsSize = NSSize(width: 120, height: 26)
+    private var barsSize: NSSize { view.lockedSince == nil ? Self.plainBarsSize : Self.lockedBarsSize }
 
     private static func size(for text: String) -> NSSize {
         let w = NSAttributedString(string: text,
                                    attributes: [.font: WaveView.textFont]).size().width
         let screen = (NSScreen.main?.visibleFrame.width ?? 1200) - 80
-        return NSSize(width: min(max(ceil(w) + 28, barsSize.width), screen),
-                      height: barsSize.height)
+        return NSSize(width: min(max(ceil(w) + 28, plainBarsSize.width), screen),
+                      height: plainBarsSize.height)
     }
 
     /// Нужна ли волна прямо сейчас. По ней решаем, куда возвращаться,
@@ -759,7 +796,15 @@ final class WavePanel {
         generation += 1
         view.text = nil
         view.busy = false // прошлая диктовка кончилась «думаю» — гасим синеву
-        present(size: Self.barsSize, near: p)
+        view.lockedSince = nil
+        present(size: barsSize, near: p)
+    }
+
+    /// Hands-free recording started (since: when) or ended (nil).
+    func lock(since: Date?) {
+        view.lockedSince = since
+        guard panel.isVisible, view.text == nil else { return }
+        resize(to: barsSize)
     }
 
     /// Сообщение в той же плашке. seconds = 0 — висит, пока не позовут
@@ -792,7 +837,7 @@ final class WavePanel {
         // и останется на экране.
         view.text = nil
         guard barsWanted else { hide(); return }
-        resize(to: Self.barsSize)
+        resize(to: barsSize)
     }
 
     /// Показать плашку нужного размера: если её ещё нет — с прыжком,

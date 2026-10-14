@@ -8,11 +8,13 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Диктовка больше не замолкает, если микрофон пропал и вернулся: погас монитор со своим микрофоном, отключилась гарнитура",
-    "Если микрофон не запустился с первого раза, Писарь сам пробует ещё раз",
+    "Запись без удержания: дважды нажмите клавишу диктовки или пробел во время диктовки, остановить ещё одним нажатием",
+    "Вставка в виртуальных машинах и удалённых рабочих столах: больше не появляется лишняя буква «v»",
+    "Окно первого запуска читается и в тёмной теме",
 ] : [
-    "Dictation no longer goes silent after the microphone disappears and comes back, like a sleeping monitor mic or a disconnected headset",
-    "If the microphone fails to start, Pisar retries on its own",
+    "Hands-free recording: double-press the dictation key or press Space while dictating, press once more to stop",
+    "Pasting into virtual machines and remote desktops no longer leaves a stray \"v\"",
+    "The first-run window is readable in Dark Mode",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.

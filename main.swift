@@ -122,6 +122,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var recStart: Date?
     var rightCmdDown = false
     let recordingStart = RecordingStart()
+
+    // Hands-free recording (#13, #20, #32): double-tap the dictation key, or
+    // press Space while holding it. A single press stops, Esc cancels.
+    var locked = false
+    private var lockedAt: Date?
+    private var pressAt: Date?
+    private var lastTapUp: Date?
+    private var swallowRelease = false
+    private var handsFreeTimer: Timer?
+    private var keyTap: CFMachPort?
+    private var swallowSpaceUp = false
+    static let doubleTapWindow: TimeInterval = 0.35
+    static let tapMax: TimeInterval = 0.3
+    static let handsFreeLimit: TimeInterval = 600
     var cancelled = false
     var animTimer: Timer?
 
@@ -1349,8 +1363,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // тогда запись отменяется. Такие события система отдаёт только
         // с разрешением «Универсальный доступ» (оно и так нужно для вставки);
         // пока его нет, просто не работает эта мелочь, а диктовка работает.
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            guard let self, self.rightCmdDown, Date() > self.syntheticKeyUntil else { return }
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            guard let self, Date() > self.syntheticKeyUntil else { return }
+            // Without the key tap, Esc still cancels a hands-free recording.
+            if self.locked, !self.rightCmdDown {
+                if e.keyCode == 53 { self.finishHandsFree(abort: true) }
+                return
+            }
+            guard self.rightCmdDown else { return }
             self.stopRecording(abort: true)
         }
     }
@@ -1360,9 +1380,32 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                    flags: e.modifierFlags.rawValue, isDown: rightCmdDown) {
         case .press:
             rightCmdDown = true
+            if locked {
+                // A single press ends a hands-free recording; its release is ours too.
+                swallowRelease = true
+                lastTapUp = nil
+                finishHandsFree(abort: false)
+                return
+            }
+            let now = Date()
+            let double = handsFree && lastTapUp.map { now.timeIntervalSince($0) < Self.doubleTapWindow } == true
+            lastTapUp = nil
+            pressAt = now
             startRecording()
+            if double { lockRecording() }
+            startKeyTap()
         case .release:
             rightCmdDown = false
+            if swallowRelease {
+                swallowRelease = false
+                if !locked { stopKeyTap() }
+                return
+            }
+            let quick = pressAt.map { Date().timeIntervalSince($0) < Self.tapMax } == true
+            lastTapUp = quick ? Date() : nil
+            pressAt = nil
+            if locked { return }
+            stopKeyTap()
             recordingStart.cancel()
             stopRecording(abort: false)
         case .none:
@@ -1375,7 +1418,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func startRecording() {
         guard !mic.isRecording else { return }
         let start = recordingStart.schedule { [weak self] in
-            guard let self, self.rightCmdDown else { return }
+            guard let self, self.rightCmdDown || self.locked else { return }
             self.beginRecording()
         }
         AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -1408,13 +1451,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             guard self.mic.isRecording else { return }
-            guard self.rightCmdDown else { self.stopRecording(abort: true); return }
+            guard self.rightCmdDown || self.locked else { self.stopRecording(abort: true); return }
             self.recStart = Date()
             self.cancelled = false
             self.hushSound()
             self.setState(.rec)
             if self.waveEnabled {
                 self.wave.show(near: WavePanel.place == .cursor ? typingAnchor() : NSEvent.mouseLocation)
+                if self.locked { self.wave.lock(since: self.lockedAt); self.hintHandsFree() }
             }
         }
         captureSelection(recording)
@@ -1511,8 +1555,110 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    // MARK: hands-free recording
+
+    var handsFree: Bool {
+        get { UserDefaults.standard.object(forKey: "handsFree") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "handsFree") }
+    }
+
+    @objc func toggleHandsFree() {
+        handsFree.toggle()
+        settingsChanged()
+    }
+
+    /// The recording goes on by itself: the key may be released.
+    func lockRecording() {
+        guard !locked else { return }
+        locked = true
+        lockedAt = Date()
+        NSLog("Гига Писарь: hands-free recording")
+        if waveEnabled { wave.lock(since: lockedAt) }
+        if state == .rec { hintHandsFree() }
+        handsFreeTimer?.invalidate()
+        handsFreeTimer = Timer.scheduledTimer(withTimeInterval: Self.handsFreeLimit, repeats: false) { [weak self] _ in
+            guard let self, self.locked else { return }
+            NSLog("Гига Писарь: hands-free limit reached")
+            self.finishHandsFree(abort: false)
+        }
+    }
+
+    /// The first few times, say how to stop: the lock alone does not tell.
+    private func hintHandsFree() {
+        let shown = UserDefaults.standard.integer(forKey: "handsFreeHints")
+        guard shown < 3, waveEnabled else { return }
+        UserDefaults.standard.set(shown + 1, forKey: "handsFreeHints")
+        Toast.shared.show(L("Запись идёт сама. Остановить: \(hotkeyInText()), отменить: Esc",
+                            "Recording on its own. Stop: \(hotkeyInText()), cancel: Esc"), seconds: 3)
+    }
+
+    func finishHandsFree(abort: Bool) {
+        endHandsFree()
+        stopRecording(abort: abort)
+    }
+
+    private func endHandsFree() {
+        locked = false
+        lockedAt = nil
+        handsFreeTimer?.invalidate()
+        handsFreeTimer = nil
+        wave.lock(since: nil)
+        if !rightCmdDown { stopKeyTap() }
+    }
+
+    /// While the key is held or a hands-free recording runs, Space and Esc are
+    /// caught before any app sees them: Space locks the recording (and must not
+    /// reach Spotlight as ⌘Space), Esc cancels a hands-free one.
+    private func startKeyTap() {
+        guard handsFree, keyTap == nil else { return }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
+        let cb: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let me = Unmanaged<App>.fromOpaque(refcon).takeUnretainedValue()
+            return me.handleTappedKey(type: type, event: event)
+        }
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                          options: .defaultTap, eventsOfInterest: mask, callback: cb,
+                                          userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        keyTap = tap
+    }
+
+    private func stopKeyTap() {
+        guard let tap = keyTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFMachPortInvalidate(tap)
+        keyTap = nil
+    }
+
+    private func handleTappedKey(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyUp {
+            if code == 49, swallowSpaceUp { swallowSpaceUp = false; return nil }
+            return Unmanaged.passUnretained(event)
+        }
+        guard Date() > syntheticKeyUntil else { return Unmanaged.passUnretained(event) }
+        if code == 49, rightCmdDown, !locked, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+            lockRecording()
+            swallowSpaceUp = true
+            return nil
+        }
+        if code == 49, rightCmdDown, locked { return nil } // auto-repeat of the same Space
+        if code == 53, locked {
+            finishHandsFree(abort: true)
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
     func stopRecording(abort: Bool) {
         recordingStart.cancel()
+        if locked { endHandsFree() }
         guard mic.isRecording else { return }
         restoreSound()
         cancelled = abort
@@ -1693,6 +1839,35 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Нажать клавишу с модификаторами за пользователя (⌘V, ⌘Z…).
+    /// Virtual machines and remote desktops forward real key presses to the
+    /// guest. A V that only carries the ⌘ flag arrives there as a bare V
+    /// (a stray "v" or "м" instead of the text), so press ⌘ as its own key
+    /// with short pauses, the way a person does.
+    var frontIsVirtualMachine: Bool {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
+        return Self.vmBundles.contains(id) || Self.vmBundlePrefixes.contains { id.hasPrefix($0) }
+    }
+    static let vmBundles: Set<String> = [
+        "com.utmapp.UTM", "com.vmware.fusion", "org.virtualbox.app.VirtualBoxVM",
+        "org.virtualbox.app.VirtualBox", "com.microsoft.rdc.macos", "com.apple.ScreenSharing",
+    ]
+    static let vmBundlePrefixes = ["com.parallels."]
+
+    func pressPasteSlowly() {
+        syntheticKeyUntil = Date().addingTimeInterval(0.6)
+        let src = CGEventSource(stateID: .combinedSessionState)
+        func post(_ vk: CGKeyCode, _ down: Bool, _ flags: CGEventFlags) {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: vk, keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cgSessionEventTap)
+            usleep(30_000)
+        }
+        post(55, true, .maskCommand)   // ⌘ down
+        post(9, true, .maskCommand)    // V down
+        post(9, false, .maskCommand)   // V up
+        post(55, false, [])            // ⌘ up
+    }
+
     func pressKey(_ vk: CGKeyCode, _ flags: CGEventFlags) {
         syntheticKeyUntil = Date().addingTimeInterval(0.4)
         let src = CGEventSource(stateID: .combinedSessionState)
@@ -1967,7 +2142,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 "Clipboard changed: paste stopped. Check previous text after replacement; dictation is saved in the menu."))
             return false
         }
-        pressKey(9, .maskCommand) // ⌘V
+        if frontIsVirtualMachine { pressPasteSlowly() } else { pressKey(9, .maskCommand) } // ⌘V
         if inField {
             // Буфер возвращаем человеку. Проверять, дошла ли вставка на самом
             // деле, мы пробовали — по каретке и числу символов в поле, — и от

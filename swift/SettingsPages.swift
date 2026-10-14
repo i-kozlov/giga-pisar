@@ -87,6 +87,15 @@ struct DictationPage: View {
             }
 
             SettingsCard {
+                SettingsRow(icon: "lock.fill", color: sys(.systemBlue),
+                            title: L("Запись без удержания", "Hands-Free Recording"),
+                            subtitle: L("Дважды нажми \(hotkeyInText()), и запись пойдёт сама: клавишу можно отпустить. Или во время диктовки, не отпуская клавишу, нажми пробел. Остановить: нажать \(hotkeyInText()) ещё раз, отменить: Esc. Пока запись идёт сама, на волне видны замочек и время. Через 10 минут запись остановится сама.",
+                                        "Double-press \(hotkeyInText()) and the recording keeps going on its own: you can let go of the key. Or press Space while holding the key during dictation. Press \(hotkeyInText()) again to stop, Esc to cancel. While it runs on its own, the wave shows a lock and the time. It stops by itself after 10 minutes.")) {
+                    Toggle("", isOn: Binding(get: { model.app.handsFree },
+                                             set: { _ in model.act { app.toggleHandsFree() } }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                }
+                RowDivider()
                 SettingsRow(icon: "textformat.size.smaller", color: sys(.systemBrown),
                             title: L("Упрощать синтаксис", "Simplify Punctuation"),
                             subtitle: L("Если надиктовано одно предложение — вставлять его со строчной буквы и без точки в конце, как реплику в переписке.",
