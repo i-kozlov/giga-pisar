@@ -8,11 +8,11 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Запись без удержания: дважды нажмите клавишу диктовки или пробел во время диктовки, остановить ещё одним нажатием",
+    "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
     "Вставка в виртуальных машинах и удалённых рабочих столах: больше не появляется лишняя буква «v»",
     "Окно первого запуска читается и в тёмной теме",
 ] : [
-    "Hands-free recording: double-press the dictation key or press Space while dictating, press once more to stop",
+    "Hands-free recording: double-press the dictation key, press once more to stop",
     "Pasting into virtual machines and remote desktops no longer leaves a stray \"v\"",
     "The first-run window is readable in Dark Mode",
 ]

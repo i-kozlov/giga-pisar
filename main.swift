@@ -123,8 +123,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var rightCmdDown = false
     let recordingStart = RecordingStart()
 
-    // Hands-free recording (#13, #20, #32): double-tap the dictation key, or
-    // press Space while holding it. A single press stops, Esc cancels.
+    // Hands-free recording (#13, #20, #32): double-tap the dictation key.
+    // A single press stops, Esc cancels. Space while holding was tried and
+    // dropped: with right ⌘ it opens Spotlight before any tap sees it.
     var locked = false
     private var lockedAt: Date?
     private var pressAt: Date?
@@ -132,7 +133,6 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var swallowRelease = false
     private var handsFreeTimer: Timer?
     private var keyTap: CFMachPort?
-    private var swallowSpaceUp = false
     static let doubleTapWindow: TimeInterval = 0.35
     static let tapMax: TimeInterval = 0.3
     static let handsFreeLimit: TimeInterval = 600
@@ -1393,19 +1393,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pressAt = now
             startRecording()
             if double { lockRecording() }
-            startKeyTap()
         case .release:
             rightCmdDown = false
-            if swallowRelease {
-                swallowRelease = false
-                if !locked { stopKeyTap() }
-                return
-            }
+            if swallowRelease { swallowRelease = false; return }
             let quick = pressAt.map { Date().timeIntervalSince($0) < Self.tapMax } == true
             lastTapUp = quick ? Date() : nil
             pressAt = nil
             if locked { return }
-            stopKeyTap()
             recordingStart.cancel()
             stopRecording(abort: false)
         case .none:
@@ -1575,6 +1569,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSLog("Гига Писарь: hands-free recording")
         if waveEnabled { wave.lock(since: lockedAt) }
         if state == .rec { hintHandsFree() }
+        startKeyTap()
         handsFreeTimer?.invalidate()
         handsFreeTimer = Timer.scheduledTimer(withTimeInterval: Self.handsFreeLimit, repeats: false) { [weak self] _ in
             guard let self, self.locked else { return }
@@ -1603,15 +1598,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         handsFreeTimer?.invalidate()
         handsFreeTimer = nil
         wave.lock(since: nil)
-        if !rightCmdDown { stopKeyTap() }
+        stopKeyTap()
     }
 
-    /// While the key is held or a hands-free recording runs, Space and Esc are
-    /// caught before any app sees them: Space locks the recording (and must not
-    /// reach Spotlight as ⌘Space), Esc cancels a hands-free one.
+    /// While a hands-free recording runs, Esc is caught before any app sees it:
+    /// it cancels the recording and must not also close a dialog there.
     private func startKeyTap() {
         guard handsFree, keyTap == nil else { return }
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         let cb: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let me = Unmanaged<App>.fromOpaque(refcon).takeUnretainedValue()
@@ -1638,17 +1632,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return Unmanaged.passUnretained(event)
         }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .keyUp {
-            if code == 49, swallowSpaceUp { swallowSpaceUp = false; return nil }
-            return Unmanaged.passUnretained(event)
-        }
         guard Date() > syntheticKeyUntil else { return Unmanaged.passUnretained(event) }
-        if code == 49, rightCmdDown, !locked, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-            lockRecording()
-            swallowSpaceUp = true
-            return nil
-        }
-        if code == 49, rightCmdDown, locked { return nil } // auto-repeat of the same Space
         if code == 53, locked {
             finishHandsFree(abort: true)
             return nil
