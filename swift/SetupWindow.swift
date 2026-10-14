@@ -832,6 +832,9 @@ final class SetupWindow: NSObject, NSWindowDelegate {
         w.standardWindowButton(.zoomButton)?.isHidden = true
         w.isOpaque = false
         w.backgroundColor = .clear
+        // The steps are drawn on a white backdrop, so system text colors
+        // must stay dark: in Dark Mode they turned white on white (#33).
+        w.appearance = NSAppearance(named: .aqua)
         w.hasShadow = true
         w.isMovableByWindowBackground = true
         w.isReleasedWhenClosed = false
