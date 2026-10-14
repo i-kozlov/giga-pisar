@@ -73,6 +73,14 @@ struct DictationPage: View {
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
+                // How to back out of a take (#19): nobody finds Esc on their own.
+                Text(L("Передумал во время диктовки: нажми Esc, ничего не вставится. Или скажи в конце «Писарь, отмена».",
+                       "Changed your mind while dictating: press Esc and nothing is pasted. Or say “Писарь, отмена” at the end."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
                 if currentHotkey().id == "rctrl" {
                     // Клавиши нет ни на встроенной клавиатуре, ни на Magic
                     // Keyboard без блока цифр — на сцене её и не покажешь.

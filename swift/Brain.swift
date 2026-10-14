@@ -638,6 +638,21 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
         return (body, command)
     }
 
+    /// "Писарь, отмена" at the very end: the take is dropped, nothing is
+    /// pasted (#19). Works without the Brain. Returns what was said before
+    /// the phrase (possibly empty), or nil when there is no such ending.
+    static func cancelledBody(_ text: String) -> String? {
+        let pat = "(?:гига[\\s,—-]+)?п[еиэ]сар[ьяюе]?\\b[\\s,.:!—-]*(?:отмена|отмени|отменить|отбой)[\\s.!]*$"
+        guard let re = try? NSRegularExpression(pattern: pat, options: [.caseInsensitive]) else { return nil }
+        let ns = text as NSString
+        guard let m = re.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        var body = ns.substring(to: m.range.location).trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = body.last, ",—-–".contains(last) {
+            body = String(body.dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return body
+    }
+
     /// Обращение «Писарь,» в начале голосовой команды над выделением —
     /// необязательное, но если сказано, в команду не попадает.
     static func stripAddress(_ text: String) -> String {

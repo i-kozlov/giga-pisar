@@ -179,6 +179,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recoveredTakes[current] = versions
         for key in recoveredTakes.keys.sorted().dropLast(20) { recoveredTakes.removeValue(forKey: key) }
         recoveryItem?.isEnabled = true
+        copyLastItem?.isEnabled = true
     }
     private var recoveryWindow: NSWindow?
     private let clipboard = DictationClipboard.shared
@@ -197,6 +198,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var takeTarget: pid_t { context.target }
     private var takeFocus: AXUIElement? { context.focus }
     private weak var recoveryItem: NSMenuItem?
+    private weak var copyLastItem: NSMenuItem?
+
+    /// The final text of the latest take, as it was pasted (#13).
+    @objc func copyLastDictation() {
+        guard let key = recoveredTakes.keys.max(), let text = recoveredTakes[key]?.last else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        Toast.shared.show(L("Скопировано: \(text.count) знаков", "Copied: \(text.count) characters"), seconds: 2)
+    }
 
     @objc func showLastDictation() {
         if recoveryWindow == nil {
@@ -471,11 +482,17 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         recovery.target = self
         recovery.isEnabled = !recoveredTakes.isEmpty
         recoveryItem = recovery
+        let copyLast = NSMenuItem(title: L("Скопировать последнюю диктовку", "Copy Last Dictation"),
+                                  action: #selector(copyLastDictation), keyEquivalent: "")
+        copyLast.target = self
+        copyLast.isEnabled = !recoveredTakes.isEmpty
+        copyLastItem = copyLast
 
         menu.addItem(mkHeader(L("Гига Писарь \(APP_VERSION)", "Giga Pisar \(APP_VERSION)"),
                               sub: L("зажми \(hotkeyInText()) и говори",
                                      "hold \(hotkeyInText()) and speak")))
         menu.addItem(recovery)
+        menu.addItem(copyLast)
         menu.addItem(NSMenuItem.separator())
 
         // Only quick switches, each with one grey line saying what it is; everything else is in Settings.
@@ -1699,6 +1716,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         Toast.shared.show(L("Микрофон отдал тишину — звук до записи не дошёл",
                                             "The microphone delivered silence — no audio reached the recording"))
                     } else if self.state == .idle, !self.recordingInProgress { self.flashError() }
+                    return
+                }
+                if let body = Brain.cancelledBody(output) {
+                    // Said "Писарь, отмена": paste nothing, but keep the words recoverable.
+                    if !body.isEmpty { self.saveDictation(body, take: self.take) }
+                    self.refreshWorkState()
+                    Toast.shared.show(body.isEmpty
+                        ? L("Отменено", "Canceled")
+                        : L("Отменено, ничего не вставил. Текст в меню → Последние диктовки",
+                            "Canceled, nothing pasted. The text is in the menu → Recent dictations"))
                     return
                 }
                 Chips.shared.hide()

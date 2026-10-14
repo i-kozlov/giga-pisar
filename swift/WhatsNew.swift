@@ -9,12 +9,14 @@ import AppKit
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
     "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
-    "Вставка в виртуальных машинах и удалённых рабочих столах: больше не появляется лишняя буква «v»",
-    "Окно первого запуска читается и в тёмной теме",
+    "Скажите в конце «Писарь, отмена», и ничего не вставится",
+    "В меню появился пункт «Скопировать последнюю диктовку»",
+    "Вставка в виртуальных машинах без лишней «v», окно первого запуска читается в тёмной теме",
 ] : [
     "Hands-free recording: double-press the dictation key, press once more to stop",
-    "Pasting into virtual machines and remote desktops no longer leaves a stray \"v\"",
-    "The first-run window is readable in Dark Mode",
+    "Say “Писарь, отмена” at the end and nothing is pasted",
+    "The menu has a new Copy Last Dictation item",
+    "Pasting into virtual machines without a stray \"v\", and the first-run window is readable in Dark Mode",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
