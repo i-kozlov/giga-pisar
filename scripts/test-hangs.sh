@@ -18,6 +18,8 @@ for optimization in debug optimized; do
     "$test_dir/mic"
     swiftc $flags -parse-as-library swift/WavePanel.swift scripts/test-ax-budget.swift -o "$test_dir/ax"
     "$test_dir/ax"
+    swiftc $flags -parse-as-library swift/Dictionary.swift scripts/test-dictionary.swift -o "$test_dir/dictionary"
+    "$test_dir/dictionary"
 done
 git diff --check
 git diff | shasum -a 256
