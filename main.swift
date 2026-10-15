@@ -36,6 +36,7 @@ func findModelDir() -> String? {
     return nil
 }
 let APP_VERSION = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+/// Older versions kept the last recording here; it is deleted at launch and never written again.
 let WAV_PATH = NSTemporaryDirectory() + "giga_rec.wav"
 let MIN_SECONDS = 0.4
 
@@ -177,9 +178,38 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Keep the raw text even after many Brain transformations.
         if versions.count > 10 { versions.remove(at: 1) }
         recoveredTakes[current] = versions
-        for key in recoveredTakes.keys.sorted().dropLast(20) { recoveredTakes.removeValue(forKey: key) }
-        recoveryItem?.isEnabled = true
+        // With "remember" off only the latest take stays, for Copy Last Dictation.
+        let keep = rememberDictations ? 20 : 1
+        for key in recoveredTakes.keys.sorted().dropLast(keep) { recoveredTakes.removeValue(forKey: key) }
         copyLastItem?.isEnabled = true
+        refreshRecoveryWindow()
+    }
+
+    /// Keep the last 20 dictations in memory (never on disk). On by default.
+    var rememberDictations: Bool {
+        get { UserDefaults.standard.object(forKey: "rememberDictations") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "rememberDictations") }
+    }
+
+    var recentDictationCount: Int { recoveredTakes.count }
+
+    @objc func toggleRememberDictations() {
+        rememberDictations.toggle()
+        if !rememberDictations, let latest = recoveredTakes.keys.max() {
+            recoveredTakes = recoveredTakes.filter { $0.key == latest }
+        }
+        refreshRecoveryWindow()
+        settingsChanged()
+    }
+
+    /// Forget every dictation at once, the latest one too.
+    @objc func clearDictations() {
+        recoveredTakes = [:]
+        lastText = nil
+        copyLastItem?.isEnabled = false
+        refreshRecoveryWindow()
+        settingsChanged()
+        Toast.shared.show(L("Диктовки стёрты", "Dictations erased"), seconds: 2)
     }
     private var recoveryWindow: NSWindow?
     private let clipboard = DictationClipboard.shared
@@ -197,7 +227,6 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var recordingContext: TakeContext?
     private var takeTarget: pid_t { context.target }
     private var takeFocus: AXUIElement? { context.focus }
-    private weak var recoveryItem: NSMenuItem?
     private weak var copyLastItem: NSMenuItem?
 
     /// The final text of the latest take, as it was pasted (#13).
@@ -207,6 +236,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pb.clearContents()
         pb.setString(text, forType: .string)
         Toast.shared.show(L("Скопировано: \(text.count) знаков", "Copied: \(text.count) characters"), seconds: 2)
+    }
+
+    private func refreshRecoveryWindow() {
+        ((recoveryWindow?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string =
+            recoveredTakes.keys.sorted().reversed().flatMap { recoveredTakes[$0] ?? [] }.joined(separator: "\n\n———\n\n")
     }
 
     @objc func showLastDictation() {
@@ -225,8 +259,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentView = scroll
             recoveryWindow = window; window.center()
         }
-        ((recoveryWindow?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string =
-            recoveredTakes.keys.sorted().reversed().flatMap { recoveredTakes[$0] ?? [] }.joined(separator: "\n\n———\n\n")
+        refreshRecoveryWindow()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         recoveryWindow?.makeKeyAndOrderFront(nil)
@@ -259,6 +292,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        try? FileManager.default.removeItem(atPath: WAV_PATH)
         installEditMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
@@ -478,11 +512,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // даже если у них есть подменю
         menu.autoenablesItems = false
         // Same look as the rest of the menu: icon, title and a grey line of what it does.
-        let recovery = mkItem(L("Последние диктовки…", "Recent Dictations…"),
-                              sub: L("20 последних, пока Писарь запущен", "the last 20, while Pisar is running"),
-                              icon: "clock.arrow.circlepath", action: #selector(showLastDictation))
-        recovery.isEnabled = !recoveredTakes.isEmpty
-        recoveryItem = recovery
+        // The full list of recent dictations lives in Settings → Dictation.
         let copyLast = mkItem(L("Скопировать последнюю диктовку", "Copy Last Dictation"),
                               sub: L("последний текст в буфер обмена", "the latest text to the clipboard"),
                               icon: "doc.on.doc", action: #selector(copyLastDictation))
@@ -492,7 +522,6 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(mkHeader(L("Гига Писарь \(APP_VERSION)", "Giga Pisar \(APP_VERSION)"),
                               sub: L("зажми \(hotkeyInText()) и говори",
                                      "hold \(hotkeyInText()) and speak")))
-        menu.addItem(recovery)
         menu.addItem(copyLast)
         menu.addItem(NSMenuItem.separator())
 
@@ -1701,7 +1730,6 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let silent = samples.reduce(Float(0)) { max($0, abs($1)) } <= 0.0015
             var text: String?
             if !silent {
-                Audio.writeWav(samples, rate: 16000, to: WAV_PATH)
                 do { text = try self?.recognizer?.transcribe(samples: samples, rate: 16000) }
                 catch { NSLog("Гига Писарь: не распознал — \(error)") }
             }
@@ -1725,8 +1753,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.refreshWorkState()
                     Toast.shared.show(body.isEmpty
                         ? L("Отменено", "Canceled")
-                        : L("Отменено, ничего не вставил. Текст в меню → Последние диктовки",
-                            "Canceled, nothing pasted. The text is in the menu → Recent dictations"))
+                        : L("Отменено, ничего не вставил. Текст в настройках → Последние диктовки",
+                            "Canceled, nothing pasted. The text is in Settings → Recent dictations"))
                     return
                 }
                 Chips.shared.hide()
@@ -1832,8 +1860,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func notifySavedDictation() {
-        Toast.shared.show(L("Текст готов: меню → Последние диктовки. Автоматически не вставлял.",
-                            "Text ready: menu → Recent dictations. Not pasted automatically."))
+        Toast.shared.show(L("Текст готов: меню → Скопировать последнюю диктовку. Автоматически не вставлял.",
+                            "Text ready: menu → Copy Last Dictation. Not pasted automatically."))
     }
 
     /// Терминалы: ⌘Z там не откатывает текст, поэтому подмена другая —
@@ -1901,10 +1929,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var deletionStarted = false
         func interrupted() {
             Toast.shared.show(deletionStarted
-                ? L("Откат прерван: прежний текст мог быть стёрт частично. Диктовки — в меню → Последние диктовки.",
-                    "Undo interrupted: previous text may be partly removed. Dictations: menu → Recent dictations.")
-                : L("Откат отменён до удаления. Диктовки — в меню → Последние диктовки.",
-                    "Undo canceled before deletion. Dictations: menu → Recent dictations."))
+                ? L("Откат прерван: прежний текст мог быть стёрт частично. Диктовки — в настройках → Последние диктовки.",
+                    "Undo interrupted: previous text may be partly removed. Dictations: Settings → Recent dictations.")
+                : L("Откат отменён до удаления. Диктовки — в настройках → Последние диктовки.",
+                    "Undo canceled before deletion. Dictations: Settings → Recent dictations."))
             done(false)
         }
         if frontIsTerminal {
@@ -2102,14 +2130,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if replacing == nil && self.take == current && self.recordingInProgress {
                         done(true); retryAfterRecording(); return
                     } else if replacing != nil {
-                        Toast.shared.show(L("Старый текст мог быть удалён; вставка остановлена. Новый текст — в меню → Последние диктовки.",
-                                            "Previous text may be removed; paste stopped. New text: menu → Recent dictations."))
+                        Toast.shared.show(L("Старый текст мог быть удалён; вставка остановлена. Новый текст — в меню → Скопировать последнюю диктовку.",
+                                            "Previous text may be removed; paste stopped. New text: menu → Copy Last Dictation."))
                     } else { self.notifySavedDictation() }
                     done(true); return
                 }
                 guard isOurs() else {
-                    Toast.shared.show(L("Буфер изменился, вставка остановлена. Прежний текст мог быть удалён при замене; диктовка — в меню → Последние диктовки.",
-                                        "Clipboard changed; paste stopped. Previous text may have been removed during replacement; dictation: menu → Recent dictations."))
+                    Toast.shared.show(L("Буфер изменился, вставка остановлена. Прежний текст мог быть удалён при замене; диктовка — в меню → Скопировать последнюю диктовку.",
+                                        "Clipboard changed; paste stopped. Previous text may have been removed during replacement; dictation: menu → Copy Last Dictation."))
                     done(false); return
                 }
                 let result = self.finishPaste(offerChips: offerChips, isOurs: isOurs)
@@ -2123,8 +2151,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else { insert() }
         }, failed: {
             if interruptedByRecording { retryAfterRecording(); return }
-            Toast.shared.show(L("Вставка недоступна. Текст сохранён: меню → Последние диктовки.",
-                                "Paste unavailable. Text saved: menu → Recent dictations."))
+            Toast.shared.show(L("Вставка недоступна. Текст сохранён: меню → Скопировать последнюю диктовку.",
+                                "Paste unavailable. Text saved: menu → Copy Last Dictation."))
         })
     }
 

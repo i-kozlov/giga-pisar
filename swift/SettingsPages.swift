@@ -94,6 +94,27 @@ struct DictationPage: View {
                 }
             }
 
+            SettingsGroup(L("Последние диктовки", "Recent Dictations")) {
+                SettingsRow(icon: "clock.arrow.circlepath", color: sys(.systemIndigo),
+                            title: L("Помнить последние диктовки", "Remember Recent Dictations"),
+                            subtitle: L("До 20 последних, только пока Писарь запущен. На диск не пишутся. Пригодятся, если текст не вставился. Если выключить, Писарь помнит только последнюю, для пункта «Скопировать последнюю диктовку».",
+                                        "Up to 20, only while Pisar is running. Never written to disk. Handy when a text did not get pasted. When off, Pisar keeps only the latest one, for Copy Last Dictation.")) {
+                    Toggle("", isOn: Binding(get: { model.app.rememberDictations },
+                                             set: { _ in model.act { app.toggleRememberDictations() } }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                }
+                RowDivider()
+                SettingsRow(icon: "list.bullet.rectangle", color: sys(.systemGray),
+                            title: L("Сейчас в памяти: \(model.app.recentDictationCount)", "In memory now: \(model.app.recentDictationCount)"),
+                            subtitle: L("Посмотреть их или стереть все сразу.", "View them or erase them all at once.")) {
+                    HStack(spacing: 6) {
+                        Button(L("Показать…", "Show…")) { app.showLastDictation() }
+                        Button(L("Стереть", "Erase")) { model.act { app.clearDictations() } }
+                    }
+                    .disabled(model.app.recentDictationCount == 0)
+                }
+            }
+
             SettingsCard {
                 SettingsRow(icon: "lock.fill", color: sys(.systemBlue),
                             title: L("Запись без удержания", "Hands-Free Recording"),
