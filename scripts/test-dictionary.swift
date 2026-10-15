@@ -133,11 +133,20 @@ import Foundation
         do { _ = try big.encode(); fatalError("oversized encode accepted") } catch is DictionaryError {} catch {
             fatalError("oversized encode: unexpected \(error)")
         }
-        let longNote = ReplacementDictionary(rules: [DictionaryRule(variants: ["a"], replacement: "b",
-                                                                   note: note + "н")])
-        do { try longNote.validate(); fatalError("long note accepted") } catch is DictionaryError {} catch {
-            fatalError("long note: unexpected \(error)")
+        func invalid(_ d: ReplacementDictionary, _ what: String) {
+            do { try d.validate(); fatalError("\(what) accepted") } catch is DictionaryError {} catch {
+                fatalError("\(what): unexpected \(error)")
+            }
         }
+        invalid(ReplacementDictionary(rules: [DictionaryRule(variants: ["a"], replacement: "b", note: note + "н")]), "long note")
+        invalid(ReplacementDictionary(rules: [DictionaryRule(
+            variants: [String(repeating: "a", count: ReplacementDictionary.maxVariantLength + 1)], replacement: "b")]), "long variant")
+        invalid(ReplacementDictionary(rules: [DictionaryRule(
+            variants: ["a"], replacement: String(repeating: "b", count: ReplacementDictionary.maxReplacementLength + 1))]), "long replacement")
+        invalid(ReplacementDictionary(rules: (0...ReplacementDictionary.maxRules).map {
+            DictionaryRule(variants: ["в\($0)"], replacement: "b") }), "too many rules")
+        invalid(ReplacementDictionary(rules: [DictionaryRule(
+            variants: (0...ReplacementDictionary.maxVariants).map { "в\($0)" }, replacement: "b")]), "too many variants")
         print("PASS JSON5 input, strict schema, round trip")
 
         storeLifecycle()
@@ -168,6 +177,16 @@ import Foundation
         check("кот", "Kitty", problem: false, "fixed file")
         write(String(repeating: " ", count: ReplacementDictionary.maxFileBytes + 1))
         check("кот", "Kitty", problem: true, "oversized file keeps the last good snapshot")
+        let good = #"{"version": 1, "rules": [{"variants": ["кот"], "replacement": "Kitty"}]}"#
+        let bad = #"{"version": 1, "rules": [{"variants": ["кот"], "replacement": ""}]}"#
+        write(good); check("кот", "Kitty", problem: false, "back to good A")
+        write(bad); check("кот", "Kitty", problem: true, "broken B")
+        write(good); check("кот", "Kitty", problem: false, "good A again")
+        write(bad); check("кот", "Kitty", problem: true, "broken B again is reported again")
+        write(good); check("кот", "Kitty", problem: false, "good A once more")
+        try! FileManager.default.removeItem(at: url)
+        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        check("кот", "Kitty", problem: true, "not a regular file")
         try! FileManager.default.removeItem(at: url)
         check("кот", "кот", problem: false, "deleted file clears the dictionary")
         print("PASS store: missing, valid, broken, fixed, oversized, deleted")

@@ -58,6 +58,14 @@ done
 lipo -create build/Giga-arm64 build/Giga-x86_64 -output "$APP/Contents/MacOS/Giga"
 rm build/Giga-arm64 build/Giga-x86_64
 
+# Словарь замен из командной строки: тот же Dictionary.swift, без модели и AppKit.
+for ARCH in arm64 x86_64; do
+    swiftc -O -target $ARCH-apple-macos13.4 -parse-as-library \
+        -o "build/giga-dict-$ARCH" swift/Dictionary.swift cli/giga-dict.swift
+done
+lipo -create build/giga-dict-arm64 build/giga-dict-x86_64 -output "$APP/Contents/MacOS/giga-dict"
+rm build/giga-dict-arm64 build/giga-dict-x86_64
+
 cp Info.plist "$APP/Contents/Info.plist"
 cp icon/Giga.icns "$APP/Contents/Resources/Giga.icns"
 # Модель клавиатуры для экрана «Диктовка»: SceneKit читает её из ресурсов.
@@ -123,6 +131,7 @@ echo "── подпись: $SIGN_ID ${SIGN_FLAGS[*]:-}"
 codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" "$APP/Contents/Frameworks/libonnxruntime.$ORT_VER.dylib"
 find "$APP/Contents/Frameworks/llama" -type f \( -name "*.dylib" -o -name "llama-server" \) \
     -exec codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" {} \;
+codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" --identifier ru.panda.giga.giga-dict "$APP/Contents/MacOS/giga-dict"
 codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" --entitlements entitlements.plist "$APP"
 
 # Установка в «Программы»: там приложение видно в Finder и Spotlight.

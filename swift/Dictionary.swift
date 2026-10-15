@@ -245,21 +245,38 @@ final class DictionaryStore {
 
     init(url: URL = DictionaryStore.defaultURL) { self.url = url }
 
+    /// Байты словаря, не больше maxFileBytes + 1; nil — файла нет.
+    /// Только обычный файл: FIFO или устройство подвесили бы чтение.
+    static func read(_ url: URL) throws -> Data? {
+        let type: FileAttributeType?
+        do {
+            type = try FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.type] as? FileAttributeType
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return nil
+        }
+        guard type == .typeRegular else { throw DictionaryError("\(url.path) — не обычный файл") }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        return try handle.read(upToCount: ReplacementDictionary.maxFileBytes + 1) ?? Data()
+    }
+
     /// Снимок правил для этой диктовки и описание поломки, если она новая.
     func refresh() -> (compiled: ReplacementDictionary.Compiled, problem: String?) {
         let bytes: Data
         do {
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            bytes = try handle.read(upToCount: ReplacementDictionary.maxFileBytes + 1) ?? Data()
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
-            compiled = ReplacementDictionary().compile()
-            goodBytes = nil; brokenBytes = nil; reported = nil
-            return (compiled, nil)
+            guard let data = try Self.read(url) else {
+                compiled = ReplacementDictionary().compile()
+                goodBytes = nil; brokenBytes = nil; reported = nil
+                return (compiled, nil)
+            }
+            bytes = data
         } catch {
-            return (compiled, report("не читается: \(error.localizedDescription)"))
+            return (compiled, report("не читается: \(error)"))
         }
-        if bytes == goodBytes { return (compiled, nil) }
+        if bytes == goodBytes {
+            brokenBytes = nil; reported = nil // поломка кончилась: следующую покажем снова
+            return (compiled, nil)
+        }
         if bytes == brokenBytes { return (compiled, nil) }
         do {
             compiled = try ReplacementDictionary.decode(bytes).compile()
