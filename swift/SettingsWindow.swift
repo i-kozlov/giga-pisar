@@ -21,6 +21,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     /// Название раздела в панели инструментов: меняется вместе с выбором.
     private var titleItem: NSToolbarItem?
     private var titleField: NSTextField?
+    /// Перечитывает микрофоны, пока окно в фокусе: только что подключённое
+    /// устройство иногда попадает в список с задержкой, без отдельного сигнала.
+    private var micPoll: Timer?
+    private var micSnapshot: [String] = []
 
     init(app: App) {
         self.app = app
@@ -123,7 +127,31 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         titleField?.stringValue = section.title
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        micSnapshot = Self.micList()
+        model?.bump()
+        micPoll?.invalidate()
+        micPoll = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.model?.section == .dictation else { return }
+            let now = Self.micList()
+            guard now != self.micSnapshot else { return }
+            self.micSnapshot = now
+            self.model?.bump()
+        }
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        micPoll?.invalidate()
+        micPoll = nil
+    }
+
+    private static func micList() -> [String] {
+        Mic.inputDevices().map { "\($0.uid)\t\($0.name)" }
+    }
+
     func windowWillClose(_ notification: Notification) {
+        micPoll?.invalidate()
+        micPoll = nil
         if let s = model?.section { UserDefaults.standard.set(s.rawValue, forKey: "settingsTab") }
         // Окно закрыли — снова живём только в строке меню.
         NSApp.setActivationPolicy(.accessory)

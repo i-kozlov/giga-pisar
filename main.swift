@@ -235,6 +235,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         installEditMenu()
+        mic.onDevicesChange = { [weak self] in self?.settings.refresh() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setState(.idle)
         offerMoveToApplications()
