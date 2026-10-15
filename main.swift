@@ -477,14 +477,15 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // включённостью пунктов управляем сами: серые должны быть серыми,
         // даже если у них есть подменю
         menu.autoenablesItems = false
-        let recovery = NSMenuItem(title: L("Последние диктовки…", "Recent dictations…"),
-                                  action: #selector(showLastDictation), keyEquivalent: "")
-        recovery.target = self
+        // Same look as the rest of the menu: icon, title and a grey line of what it does.
+        let recovery = mkItem(L("Последние диктовки…", "Recent Dictations…"),
+                              sub: L("20 последних, пока Писарь запущен", "the last 20, while Pisar is running"),
+                              icon: "clock.arrow.circlepath", action: #selector(showLastDictation))
         recovery.isEnabled = !recoveredTakes.isEmpty
         recoveryItem = recovery
-        let copyLast = NSMenuItem(title: L("Скопировать последнюю диктовку", "Copy Last Dictation"),
-                                  action: #selector(copyLastDictation), keyEquivalent: "")
-        copyLast.target = self
+        let copyLast = mkItem(L("Скопировать последнюю диктовку", "Copy Last Dictation"),
+                              sub: L("последний текст в буфер обмена", "the latest text to the clipboard"),
+                              icon: "doc.on.doc", action: #selector(copyLastDictation))
         copyLast.isEnabled = !recoveredTakes.isEmpty
         copyLastItem = copyLast
 
