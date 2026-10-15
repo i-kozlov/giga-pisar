@@ -10,13 +10,13 @@ import AppKit
 let WHATS_NEW: [String] = uiIsRussian ? [
     "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
     "Скажите в конце «Писарь, отмена», и ничего не вставится",
-    "В меню появился пункт «Скопировать последнюю диктовку», верхние пункты меню в общем стиле",
-    "Вставка в виртуальных машинах без лишней «v», окно первого запуска читается в тёмной теме",
+    "В меню «Скопировать последнюю диктовку», а последние диктовки в настройках: их можно стереть или не запоминать",
+    "Вставка в виртуальных машинах без лишней «v», запись голоса больше не сохраняется в файл",
 ] : [
     "Hands-free recording: double-press the dictation key, press once more to stop",
     "Say “Писарь, отмена” at the end and nothing is pasted",
-    "The menu has a new Copy Last Dictation item, and its top items match the rest",
-    "Pasting into virtual machines without a stray \"v\", and the first-run window is readable in Dark Mode",
+    "Copy Last Dictation in the menu, and recent dictations in Settings: erase them or do not keep them",
+    "Pasting into virtual machines without a stray \"v\", and recordings are no longer saved to a file",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
