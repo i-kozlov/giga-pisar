@@ -20,6 +20,9 @@ for optimization in debug optimized; do
     "$test_dir/ax"
     swiftc $flags -parse-as-library swift/Dictionary.swift scripts/test-dictionary.swift -o "$test_dir/dictionary"
     "$test_dir/dictionary"
+    swiftc $flags -parse-as-library swift/Dictionary.swift cli/giga-dict.swift -o "$test_dir/giga-dict"
+    mkdir "$test_dir/dict-$optimization"
+    sh scripts/test-giga-dict.sh "$test_dir/giga-dict" "$test_dir/dict-$optimization"
 done
 git diff --check
 git diff | shasum -a 256

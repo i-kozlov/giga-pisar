@@ -13,7 +13,7 @@ import Foundation
       add --variant ФРАЗА [--variant ФРАЗА…] --replacement ЗАМЕНА [--note ЗАМЕТКА]
                                             добавить; вариант с той же заменой — ничего не делает,
                                             с другой — ошибка
-      remove ФРАЗА                          убрать один вариант; опустевшее правило уходит целиком
+      remove ФРАЗА                          убрать вариант из всех правил; опустевшее правило уходит целиком
       test ТЕКСТ                            что получится после замен
 
     Варианты сравниваются без учёта регистра и только целыми словами;
@@ -26,7 +26,7 @@ import Foundation
         var url = DictionaryStore.defaultURL
         if args.first == "--file" {
             guard args.count >= 2 else { fail("после --file нужен путь") }
-            url = URL(fileURLWithPath: args[1])
+            url = URL(fileURLWithPath: (args[1] as NSString).expandingTildeInPath)
             args.removeFirst(2)
         }
         guard let command = args.first else { print(usage); exit(0) }
@@ -34,8 +34,10 @@ import Foundation
         do {
             switch command {
             case "path":
+                guard rest.isEmpty else { fail("path без аргументов") }
                 print(url.path)
             case "list":
+                guard rest.isEmpty else { fail("list без аргументов; --file пишется до команды") }
                 let dictionary = try read(url)
                 for (i, rule) in dictionary.rules.enumerated() {
                     let note = rule.note.map { "  # \($0)" } ?? ""
@@ -99,9 +101,9 @@ import Foundation
         try change(&dictionary)
         guard dictionary != before else { return }
         let data = try dictionary.encode()
-        let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(getpid()).tmp")
+        let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         do {
-            try data.write(to: temp)
+            try data.write(to: temp, options: .withoutOverwriting)
             guard rename(temp.path, url.path) == 0 else {
                 throw DictionaryError("не записать \(url.path): \(String(cString: strerror(errno)))")
             }
@@ -135,7 +137,8 @@ import Foundation
         return (variants, replacement, note)
     }
 
-    /// Новые варианты дописываются к правилу с той же заменой, иначе — новое правило.
+    /// Новые варианты дописываются к правилу с той же заменой и той же заметкой,
+    /// иначе — новое правило: заметка не теряется.
     static func add(_ dictionary: inout ReplacementDictionary, _ variants: [String],
                     _ replacement: String, _ note: String?) throws {
         var fresh: [String] = []
@@ -145,26 +148,29 @@ import Foundation
                 guard rule.replacement == replacement else {
                     throw DictionaryError("«\(variant)» уже заменяется на «\(rule.replacement)»; сначала remove")
                 }
-                self.note("«\(variant)» → «\(replacement)» уже есть")
+                let unchanged = note.map { $0 != rule.note ? "; заметка не изменена" : "" } ?? ""
+                self.note("«\(variant)» → «\(replacement)» уже есть\(unchanged)")
             } else if !fresh.contains(where: { ReplacementDictionary.key($0) == key }) {
                 fresh.append(variant)
             }
         }
         guard !fresh.isEmpty else { return }
-        if let i = dictionary.rules.firstIndex(where: { $0.replacement == replacement }) {
+        if let i = dictionary.rules.firstIndex(where: { $0.replacement == replacement && $0.note == note }) {
             dictionary.rules[i].variants += fresh
-            if dictionary.rules[i].note == nil { dictionary.rules[i].note = note }
         } else {
             dictionary.rules.append(DictionaryRule(variants: fresh, replacement: replacement, note: note))
         }
         try dictionary.validate()
     }
 
+    /// Убирает вариант из всех правил: одинаковый вариант с одной заменой может стоять в нескольких.
     static func remove(_ dictionary: inout ReplacementDictionary, _ variant: String) throws {
         let key = ReplacementDictionary.key(variant)
-        guard let i = dictionary.rules.firstIndex(where: { $0.variants.contains { ReplacementDictionary.key($0) == key } })
-        else { throw DictionaryError("«\(variant)» в словаре нет") }
-        dictionary.rules[i].variants.removeAll { ReplacementDictionary.key($0) == key }
-        if dictionary.rules[i].variants.isEmpty { dictionary.rules.remove(at: i) }
+        let before = dictionary.rules
+        for i in dictionary.rules.indices {
+            dictionary.rules[i].variants.removeAll { ReplacementDictionary.key($0) == key }
+        }
+        guard dictionary.rules != before else { throw DictionaryError("«\(variant)» в словаре нет") }
+        dictionary.rules.removeAll { $0.variants.isEmpty }
     }
 }
