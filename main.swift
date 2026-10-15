@@ -136,6 +136,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Модель. Грузится один раз в фоне; recognizer трогаем только из recognizerQueue.
     var recognizer: Recognizer?
     let recognizerQueue = DispatchQueue(label: "ru.panda.giga.recognizer")
+    private let dictionary = DictionaryStore() // recognizerQueue only
     private var pendingOperations = 0 // main queue; includes older takes and Brain
 
     /// Приглушили ли мы звук сами — тогда нам его и возвращать.
@@ -1558,6 +1559,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 catch { NSLog("Гига Писарь: не распознал — \(error)") }
             }
             let output = text
+            var corrected = text
+            var dictionaryProblem: String?
+            if let raw = text {
+                let (rules, problem) = self?.dictionary.refresh() ?? (ReplacementDictionary().compile(), nil)
+                corrected = rules.apply(raw)
+                dictionaryProblem = problem
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.pendingOperations -= 1
@@ -1575,8 +1583,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if self.selectionReady != nil { self.notifySavedDictation() }
                 self.context.ready = nil
                 self.context = recording
+                if let problem = dictionaryProblem {
+                    Toast.shared.show(L("Словарь не прочитан, работают прежние правила: \(problem)",
+                                        "Dictionary not loaded, previous rules stay: \(problem)"))
+                }
                 self.saveDictation(output, take: self.take)
-                self.deliverTranscription(output, take: self.take)
+                let text = corrected ?? output
+                if text != output { self.saveDictation(text, take: self.take) }
+                self.deliverTranscription(text, take: self.take)
             }
         }
     }

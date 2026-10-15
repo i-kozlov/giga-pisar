@@ -19,6 +19,8 @@ struct ReplacementDictionary: Equatable {
     static let version = 1
     static let maxFileBytes = 1 << 20
     static let maxRules = 5000
+    static let maxVariants = 20000
+    static let maxNoteLength = 1000
     static let maxVariantLength = 200
     static let maxReplacementLength = 1000
 
@@ -40,10 +42,11 @@ struct ReplacementDictionary: Equatable {
         guard let root = any as? [String: Any] else { throw DictionaryError("в корне должен быть объект") }
         try onlyKeys(root, ["version", "rules"], at: "корень")
         guard let version = root["version"] as? NSNumber, !isBool(version),
-              version.doubleValue == Double(Self.version) else {
+              !CFNumberIsFloatType(version), version.intValue == Self.version else {
             throw DictionaryError("version должен быть \(Self.version)")
         }
         guard let list = root["rules"] as? [Any] else { throw DictionaryError("rules должен быть массивом") }
+        guard list.count <= maxRules else { throw DictionaryError("правил больше \(maxRules)") }
         var rules: [DictionaryRule] = []
         for (i, item) in list.enumerated() {
             let at = "правило \(i + 1)"
@@ -82,6 +85,9 @@ struct ReplacementDictionary: Equatable {
         var data = try JSONSerialization.data(withJSONObject: root,
                                               options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         data.append(0x0A)
+        guard data.count <= Self.maxFileBytes else {
+            throw DictionaryError("словарь не помещается в \(Self.maxFileBytes) байт")
+        }
         return data
     }
 
@@ -95,9 +101,14 @@ struct ReplacementDictionary: Equatable {
 
     // MARK: проверка
 
-    /// Ключ варианта: NFC, без краевых пробелов, без учёта регистра.
+    /// Ключ варианта: NFC, без краевых пробелов, каждый знак без учёта
+    /// регистра. Сравнение по знакам, как в apply: «ß» и «ss» — разные.
     static func key(_ variant: String) -> String {
-        folded(normalizedVariant(variant))
+        pattern(normalizedVariant(variant)).joined(separator: "\u{1F}")
+    }
+
+    fileprivate static func pattern(_ s: String) -> [String] {
+        s.map { folded(String($0)) }
     }
 
     static func normalizedVariant(_ variant: String) -> String {
@@ -110,10 +121,16 @@ struct ReplacementDictionary: Equatable {
 
     func validate() throws {
         guard rules.count <= Self.maxRules else { throw DictionaryError("правил больше \(Self.maxRules)") }
+        guard rules.reduce(0, { $0 + $1.variants.count }) <= Self.maxVariants else {
+            throw DictionaryError("вариантов больше \(Self.maxVariants)")
+        }
         var seen: [String: String] = [:]
         for (i, rule) in rules.enumerated() {
             let at = "правило \(i + 1)"
             guard !rule.variants.isEmpty else { throw DictionaryError("\(at): нет ни одного варианта") }
+            guard (rule.note?.count ?? 0) <= Self.maxNoteLength else {
+                throw DictionaryError("\(at): заметка длиннее \(Self.maxNoteLength) знаков")
+            }
             guard !rule.replacement.isEmpty else { throw DictionaryError("\(at): пустая замена") }
             guard rule.replacement.count <= Self.maxReplacementLength else {
                 throw DictionaryError("\(at): замена длиннее \(Self.maxReplacementLength) знаков")
@@ -140,8 +157,6 @@ struct ReplacementDictionary: Equatable {
         fileprivate struct Entry {
             let pattern: [String]    // вариант по знакам, каждый без учёта регистра
             let replacement: String
-            let startsWord: Bool
-            let endsWord: Bool
         }
         fileprivate let byFirst: [String: [Entry]]
 
@@ -170,18 +185,22 @@ struct ReplacementDictionary: Equatable {
             guard let candidates = byFirst[keys[i]] else { return nil }
             for entry in candidates {
                 let end = i + entry.pattern.count
-                guard end <= chars.count, Array(keys[i..<end]) == entry.pattern else { continue }
-                if entry.startsWord, i > 0, isWord(chars[i - 1]) { continue }
-                if entry.endsWord, end < chars.count, isWord(chars[end]) { continue }
+                guard end <= chars.count, keys[i..<end].elementsEqual(entry.pattern) else { continue }
+                if i > 0, isWord(chars[i - 1]) { continue }
+                if end < chars.count, isWord(chars[end]) { continue }
                 return entry
             }
             return nil
         }
     }
 
-    /// Граница слова: буквы и цифры (со знаками над ними) — часть слова,
-    /// всё остальное, включая _ - + #, — граница.
-    fileprivate static func isWordChar(_ c: Character) -> Bool { c.isLetter || c.isNumber }
+    /// Вариант заменяется, только если рядом с ним нет буквы, цифры или
+    /// диакритического знака: «C++» в «C++17» не трогаем. _ - + # и прочее — граница.
+    fileprivate static func isWordChar(_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || c.unicodeScalars.allSatisfy {
+            [.nonspacingMark, .spacingMark, .enclosingMark].contains($0.properties.generalCategory)
+        }
+    }
 
     func compile() -> Compiled {
         var byFirst: [String: [Compiled.Entry]] = [:]
@@ -190,12 +209,9 @@ struct ReplacementDictionary: Equatable {
             for variant in rule.variants {
                 let key = Self.key(variant)
                 guard used.insert(key).inserted else { continue }
-                let chars = Array(Self.normalizedVariant(variant))
-                guard let first = chars.first, let last = chars.last else { continue }
-                let pattern = chars.map { Self.folded(String($0)) }
-                let entry = Compiled.Entry(pattern: pattern, replacement: rule.replacement,
-                                           startsWord: Self.isWordChar(first), endsWord: Self.isWordChar(last))
-                byFirst[pattern[0], default: []].append(entry)
+                let pattern = Self.pattern(Self.normalizedVariant(variant))
+                guard let first = pattern.first else { continue }
+                byFirst[first, default: []].append(Compiled.Entry(pattern: pattern, replacement: rule.replacement))
             }
         }
         for (k, list) in byFirst {
@@ -211,3 +227,54 @@ struct ReplacementDictionary: Equatable {
 }
 
 private func isWord(_ c: Character) -> Bool { ReplacementDictionary.isWordChar(c) }
+
+/// Словарь на диске. Перечитывает файл на каждой диктовке, разбирает только
+/// изменившиеся байты; битый файл не отменяет последний исправный снимок.
+/// Не потокобезопасен: владелец держит его на одной очереди.
+final class DictionaryStore {
+    static var defaultURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/Giga Pisar/dictionary.json")
+    }
+
+    let url: URL
+    private(set) var compiled = ReplacementDictionary().compile()
+    private var goodBytes: Data?
+    private var brokenBytes: Data?
+    private var reported: String?
+
+    init(url: URL = DictionaryStore.defaultURL) { self.url = url }
+
+    /// Снимок правил для этой диктовки и описание поломки, если она новая.
+    func refresh() -> (compiled: ReplacementDictionary.Compiled, problem: String?) {
+        let bytes: Data
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            bytes = try handle.read(upToCount: ReplacementDictionary.maxFileBytes + 1) ?? Data()
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            compiled = ReplacementDictionary().compile()
+            goodBytes = nil; brokenBytes = nil; reported = nil
+            return (compiled, nil)
+        } catch {
+            return (compiled, report("не читается: \(error.localizedDescription)"))
+        }
+        if bytes == goodBytes { return (compiled, nil) }
+        if bytes == brokenBytes { return (compiled, nil) }
+        do {
+            compiled = try ReplacementDictionary.decode(bytes).compile()
+            goodBytes = bytes; brokenBytes = nil; reported = nil
+            return (compiled, nil)
+        } catch {
+            brokenBytes = bytes
+            reported = String(describing: error)
+            return (compiled, reported)
+        }
+    }
+
+    private func report(_ problem: String) -> String? {
+        guard problem != reported else { return nil }
+        reported = problem
+        return problem
+    }
+}
