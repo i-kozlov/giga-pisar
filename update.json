@@ -1,17 +1,21 @@
 {
-  "version": "3.9.7",
+  "version": "3.9.8",
   "downloads": [
-    "https://gitflic.ru/project/moznoazachem/giga/release/6ee4beaf-2985-4ab6-847d-9e0e3b51fba5/a83d2868-e51b-4cf2-9c78-0bb7fedfb5c4/download",
-    "https://github.com/moznoazachem/giga-pisar/releases/download/v3.9.7/GigaPisar-3.9.7.zip"
+    "https://gitflic.ru/project/moznoazachem/giga/release/f4f5c41f-2268-4ae9-92c2-fdbcd7805cdb/cb4db75b-69bf-4f91-b9ab-9e11aeffbbf2/download",
+    "https://github.com/moznoazachem/giga-pisar/releases/download/v3.9.8/GigaPisar-3.9.8.zip"
   ],
   "notes": {
     "ru": [
-      "Диктовка больше не замолкает, если микрофон пропал и вернулся: погас монитор со своим микрофоном, отключилась гарнитура",
-      "Если микрофон не запустился с первого раза, Писарь сам пробует ещё раз"
+      "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
+      "Скажите в конце «Писарь, отмена», и ничего не вставится",
+      "В меню появился пункт «Скопировать последнюю диктовку»",
+      "Вставка в виртуальных машинах без лишней «v», окно первого запуска читается в тёмной теме"
     ],
     "en": [
-      "Dictation no longer goes silent after the microphone disappears and comes back, like a sleeping monitor mic or a disconnected headset",
-      "If the microphone fails to start, Pisar retries on its own"
+      "Hands-free recording: double-press the dictation key, press once more to stop",
+      "Say “Писарь, отмена” at the end and nothing is pasted",
+      "The menu has a new Copy Last Dictation item",
+      "Pasting into virtual machines without a stray \"v\", and the first-run window is readable in Dark Mode"
     ]
   }
 }
