@@ -44,7 +44,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 
 SOURCES=(main.swift swift/Ort.swift swift/Features.swift swift/Tokenizer.swift
          swift/Recognizer.swift swift/Audio.swift swift/Mic.swift swift/Sound.swift swift/WavePanel.swift swift/Chips.swift swift/Brain.swift swift/SettingsWindow.swift swift/RowIcon.swift swift/SettingsView.swift swift/SettingsPages.swift swift/SetupWindow.swift swift/CloudBrain.swift swift/KeyboardScene.swift swift/Updates.swift
-         swift/SelfUpdate.swift swift/WhatsNew.swift swift/UpdateWindow.swift swift/Memory.swift swift/FileHash.swift swift/Clipboard.swift swift/RecordingStart.swift)
+         swift/SelfUpdate.swift swift/WhatsNew.swift swift/UpdateWindow.swift swift/Memory.swift swift/FileHash.swift swift/Clipboard.swift swift/RecordingStart.swift swift/Dictionary.swift)
 
 # универсальный бинарник: Apple Silicon + Intel в одном файле
 echo "── сборка"
@@ -57,6 +57,14 @@ for ARCH in arm64 x86_64; do
 done
 lipo -create build/Giga-arm64 build/Giga-x86_64 -output "$APP/Contents/MacOS/Giga"
 rm build/Giga-arm64 build/Giga-x86_64
+
+# Словарь замен из командной строки: тот же Dictionary.swift, без модели и AppKit.
+for ARCH in arm64 x86_64; do
+    swiftc -O -target $ARCH-apple-macos13.4 -parse-as-library \
+        -o "build/giga-dict-$ARCH" swift/Dictionary.swift cli/giga-dict.swift
+done
+lipo -create build/giga-dict-arm64 build/giga-dict-x86_64 -output "$APP/Contents/MacOS/giga-dict"
+rm build/giga-dict-arm64 build/giga-dict-x86_64
 
 cp Info.plist "$APP/Contents/Info.plist"
 cp icon/Giga.icns "$APP/Contents/Resources/Giga.icns"
@@ -123,6 +131,7 @@ echo "── подпись: $SIGN_ID ${SIGN_FLAGS[*]:-}"
 codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" "$APP/Contents/Frameworks/libonnxruntime.$ORT_VER.dylib"
 find "$APP/Contents/Frameworks/llama" -type f \( -name "*.dylib" -o -name "llama-server" \) \
     -exec codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" {} \;
+codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" --identifier ru.panda.giga.giga-dict "$APP/Contents/MacOS/giga-dict"
 codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" --entitlements entitlements.plist "$APP"
 
 # Установка в «Программы»: там приложение видно в Finder и Spotlight.
