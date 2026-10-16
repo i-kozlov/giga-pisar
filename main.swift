@@ -36,6 +36,7 @@ func findModelDir() -> String? {
     return nil
 }
 let APP_VERSION = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+/// Older versions kept the last recording here; it is deleted at launch and never written again.
 let WAV_PATH = NSTemporaryDirectory() + "giga_rec.wav"
 let MIN_SECONDS = 0.4
 
@@ -122,6 +123,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var recStart: Date?
     var rightCmdDown = false
     let recordingStart = RecordingStart()
+
+    // Hands-free recording (#13, #20, #32): double-tap the dictation key.
+    // A single press stops, Esc cancels. Space while holding was tried and
+    // dropped: with right ⌘ it opens Spotlight before any tap sees it.
+    var locked = false
+    private var lockedAt: Date?
+    private var pressAt: Date?
+    private var lastTapUp: Date?
+    private var swallowRelease = false
+    private var handsFreeTimer: Timer?
+    private var keyTap: CFMachPort?
+    static let doubleTapWindow: TimeInterval = 0.35
+    static let tapMax: TimeInterval = 0.3
+    static let handsFreeLimit: TimeInterval = 600
     var cancelled = false
     var animTimer: Timer?
 
@@ -163,8 +178,38 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Keep the raw text even after many Brain transformations.
         if versions.count > 10 { versions.remove(at: 1) }
         recoveredTakes[current] = versions
-        for key in recoveredTakes.keys.sorted().dropLast(20) { recoveredTakes.removeValue(forKey: key) }
-        recoveryItem?.isEnabled = true
+        // With "remember" off only the latest take stays, for Copy Last Dictation.
+        let keep = rememberDictations ? 20 : 1
+        for key in recoveredTakes.keys.sorted().dropLast(keep) { recoveredTakes.removeValue(forKey: key) }
+        copyLastItem?.isEnabled = true
+        refreshRecoveryWindow()
+    }
+
+    /// Keep the last 20 dictations in memory (never on disk). On by default.
+    var rememberDictations: Bool {
+        get { UserDefaults.standard.object(forKey: "rememberDictations") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "rememberDictations") }
+    }
+
+    var recentDictationCount: Int { recoveredTakes.count }
+
+    @objc func toggleRememberDictations() {
+        rememberDictations.toggle()
+        if !rememberDictations, let latest = recoveredTakes.keys.max() {
+            recoveredTakes = recoveredTakes.filter { $0.key == latest }
+        }
+        refreshRecoveryWindow()
+        settingsChanged()
+    }
+
+    /// Forget every dictation at once, the latest one too.
+    @objc func clearDictations() {
+        recoveredTakes = [:]
+        lastText = nil
+        copyLastItem?.isEnabled = false
+        refreshRecoveryWindow()
+        settingsChanged()
+        Toast.shared.show(L("Диктовки стёрты", "Dictations erased"), seconds: 2)
     }
     private var recoveryWindow: NSWindow?
     private let clipboard = DictationClipboard.shared
@@ -182,7 +227,21 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var recordingContext: TakeContext?
     private var takeTarget: pid_t { context.target }
     private var takeFocus: AXUIElement? { context.focus }
-    private weak var recoveryItem: NSMenuItem?
+    private weak var copyLastItem: NSMenuItem?
+
+    /// The final text of the latest take, as it was pasted (#13).
+    @objc func copyLastDictation() {
+        guard let key = recoveredTakes.keys.max(), let text = recoveredTakes[key]?.last else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        Toast.shared.show(L("Скопировано: \(text.count) знаков", "Copied: \(text.count) characters"), seconds: 2)
+    }
+
+    private func refreshRecoveryWindow() {
+        ((recoveryWindow?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string =
+            recoveredTakes.keys.sorted().reversed().flatMap { recoveredTakes[$0] ?? [] }.joined(separator: "\n\n———\n\n")
+    }
 
     @objc func showLastDictation() {
         if recoveryWindow == nil {
@@ -200,8 +259,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.contentView = scroll
             recoveryWindow = window; window.center()
         }
-        ((recoveryWindow?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string =
-            recoveredTakes.keys.sorted().reversed().flatMap { recoveredTakes[$0] ?? [] }.joined(separator: "\n\n———\n\n")
+        refreshRecoveryWindow()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         recoveryWindow?.makeKeyAndOrderFront(nil)
@@ -234,6 +292,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        try? FileManager.default.removeItem(atPath: WAV_PATH)
         installEditMenu()
         mic.onDevicesChange = { [weak self] in self?.settings.refresh() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -453,16 +512,18 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // включённостью пунктов управляем сами: серые должны быть серыми,
         // даже если у них есть подменю
         menu.autoenablesItems = false
-        let recovery = NSMenuItem(title: L("Последние диктовки…", "Recent dictations…"),
-                                  action: #selector(showLastDictation), keyEquivalent: "")
-        recovery.target = self
-        recovery.isEnabled = !recoveredTakes.isEmpty
-        recoveryItem = recovery
+        // Same look as the rest of the menu: icon, title and a grey line of what it does.
+        // The full list of recent dictations lives in Settings → Dictation.
+        let copyLast = mkItem(L("Скопировать последнюю диктовку", "Copy Last Dictation"),
+                              sub: L("последний текст в буфер обмена", "the latest text to the clipboard"),
+                              icon: "doc.on.doc", action: #selector(copyLastDictation))
+        copyLast.isEnabled = !recoveredTakes.isEmpty
+        copyLastItem = copyLast
 
         menu.addItem(mkHeader(L("Гига Писарь \(APP_VERSION)", "Giga Pisar \(APP_VERSION)"),
                               sub: L("зажми \(hotkeyInText()) и говори",
                                      "hold \(hotkeyInText()) and speak")))
-        menu.addItem(recovery)
+        menu.addItem(copyLast)
         menu.addItem(NSMenuItem.separator())
 
         // Only quick switches, each with one grey line saying what it is; everything else is in Settings.
@@ -1350,8 +1411,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // тогда запись отменяется. Такие события система отдаёт только
         // с разрешением «Универсальный доступ» (оно и так нужно для вставки);
         // пока его нет, просто не работает эта мелочь, а диктовка работает.
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            guard let self, self.rightCmdDown, Date() > self.syntheticKeyUntil else { return }
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            guard let self, Date() > self.syntheticKeyUntil else { return }
+            // Without the key tap, Esc still cancels a hands-free recording.
+            if self.locked, !self.rightCmdDown {
+                if e.keyCode == 53 { self.finishHandsFree(abort: true) }
+                return
+            }
+            guard self.rightCmdDown else { return }
             self.stopRecording(abort: true)
         }
     }
@@ -1361,9 +1428,26 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                    flags: e.modifierFlags.rawValue, isDown: rightCmdDown) {
         case .press:
             rightCmdDown = true
+            if locked {
+                // A single press ends a hands-free recording; its release is ours too.
+                swallowRelease = true
+                lastTapUp = nil
+                finishHandsFree(abort: false)
+                return
+            }
+            let now = Date()
+            let double = handsFree && lastTapUp.map { now.timeIntervalSince($0) < Self.doubleTapWindow } == true
+            lastTapUp = nil
+            pressAt = now
             startRecording()
+            if double { lockRecording() }
         case .release:
             rightCmdDown = false
+            if swallowRelease { swallowRelease = false; return }
+            let quick = pressAt.map { Date().timeIntervalSince($0) < Self.tapMax } == true
+            lastTapUp = quick ? Date() : nil
+            pressAt = nil
+            if locked { return }
             recordingStart.cancel()
             stopRecording(abort: false)
         case .none:
@@ -1376,7 +1460,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func startRecording() {
         guard !mic.isRecording else { return }
         let start = recordingStart.schedule { [weak self] in
-            guard let self, self.rightCmdDown else { return }
+            guard let self, self.rightCmdDown || self.locked else { return }
             self.beginRecording()
         }
         AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -1409,13 +1493,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             guard self.mic.isRecording else { return }
-            guard self.rightCmdDown else { self.stopRecording(abort: true); return }
+            guard self.rightCmdDown || self.locked else { self.stopRecording(abort: true); return }
             self.recStart = Date()
             self.cancelled = false
             self.hushSound()
             self.setState(.rec)
             if self.waveEnabled {
                 self.wave.show(near: WavePanel.place == .cursor ? typingAnchor() : NSEvent.mouseLocation)
+                if self.locked { self.wave.lock(since: self.lockedAt); self.hintHandsFree() }
             }
         }
         captureSelection(recording)
@@ -1512,8 +1597,100 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    // MARK: hands-free recording
+
+    var handsFree: Bool {
+        get { UserDefaults.standard.object(forKey: "handsFree") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "handsFree") }
+    }
+
+    @objc func toggleHandsFree() {
+        handsFree.toggle()
+        settingsChanged()
+    }
+
+    /// The recording goes on by itself: the key may be released.
+    func lockRecording() {
+        guard !locked else { return }
+        locked = true
+        lockedAt = Date()
+        NSLog("Гига Писарь: hands-free recording")
+        if waveEnabled { wave.lock(since: lockedAt) }
+        if state == .rec { hintHandsFree() }
+        startKeyTap()
+        handsFreeTimer?.invalidate()
+        handsFreeTimer = Timer.scheduledTimer(withTimeInterval: Self.handsFreeLimit, repeats: false) { [weak self] _ in
+            guard let self, self.locked else { return }
+            NSLog("Гига Писарь: hands-free limit reached")
+            self.finishHandsFree(abort: false)
+        }
+    }
+
+    /// The first few times, say how to stop: the lock alone does not tell.
+    private func hintHandsFree() {
+        let shown = UserDefaults.standard.integer(forKey: "handsFreeHints")
+        guard shown < 3, waveEnabled else { return }
+        UserDefaults.standard.set(shown + 1, forKey: "handsFreeHints")
+        Toast.shared.show(L("Запись идёт сама. Остановить: \(hotkeyInText()), отменить: Esc",
+                            "Recording on its own. Stop: \(hotkeyInText()), cancel: Esc"), seconds: 3)
+    }
+
+    func finishHandsFree(abort: Bool) {
+        endHandsFree()
+        stopRecording(abort: abort)
+    }
+
+    private func endHandsFree() {
+        locked = false
+        lockedAt = nil
+        handsFreeTimer?.invalidate()
+        handsFreeTimer = nil
+        wave.lock(since: nil)
+        stopKeyTap()
+    }
+
+    /// While a hands-free recording runs, Esc is caught before any app sees it:
+    /// it cancels the recording and must not also close a dialog there.
+    private func startKeyTap() {
+        guard handsFree, keyTap == nil else { return }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let cb: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let me = Unmanaged<App>.fromOpaque(refcon).takeUnretainedValue()
+            return me.handleTappedKey(type: type, event: event)
+        }
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
+                                          options: .defaultTap, eventsOfInterest: mask, callback: cb,
+                                          userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        keyTap = tap
+    }
+
+    private func stopKeyTap() {
+        guard let tap = keyTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFMachPortInvalidate(tap)
+        keyTap = nil
+    }
+
+    private func handleTappedKey(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        guard Date() > syntheticKeyUntil else { return Unmanaged.passUnretained(event) }
+        if code == 53, locked {
+            finishHandsFree(abort: true)
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
     func stopRecording(abort: Bool) {
         recordingStart.cancel()
+        if locked { endHandsFree() }
         guard mic.isRecording else { return }
         restoreSound()
         cancelled = abort
@@ -1554,7 +1731,6 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let silent = samples.reduce(Float(0)) { max($0, abs($1)) } <= 0.0015
             var text: String?
             if !silent {
-                Audio.writeWav(samples, rate: 16000, to: WAV_PATH)
                 do { text = try self?.recognizer?.transcribe(samples: samples, rate: 16000) }
                 catch { NSLog("Гига Писарь: не распознал — \(error)") }
             }
@@ -1570,6 +1746,16 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         Toast.shared.show(L("Микрофон отдал тишину — звук до записи не дошёл",
                                             "The microphone delivered silence — no audio reached the recording"))
                     } else if self.state == .idle, !self.recordingInProgress { self.flashError() }
+                    return
+                }
+                if let body = Brain.cancelledBody(output) {
+                    // Said "Писарь, отмена": paste nothing, but keep the words recoverable.
+                    if !body.isEmpty { self.saveDictation(body, take: self.take) }
+                    self.refreshWorkState()
+                    Toast.shared.show(body.isEmpty
+                        ? L("Отменено", "Canceled")
+                        : L("Отменено, ничего не вставил. Текст в настройках → Последние диктовки",
+                            "Canceled, nothing pasted. The text is in Settings → Recent dictations"))
                     return
                 }
                 Chips.shared.hide()
@@ -1675,8 +1861,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func notifySavedDictation() {
-        Toast.shared.show(L("Текст готов: меню → Последние диктовки. Автоматически не вставлял.",
-                            "Text ready: menu → Recent dictations. Not pasted automatically."))
+        Toast.shared.show(L("Текст готов: меню → Скопировать последнюю диктовку. Автоматически не вставлял.",
+                            "Text ready: menu → Copy Last Dictation. Not pasted automatically."))
     }
 
     /// Терминалы: ⌘Z там не откатывает текст, поэтому подмена другая —
@@ -1694,6 +1880,35 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Нажать клавишу с модификаторами за пользователя (⌘V, ⌘Z…).
+    /// Virtual machines and remote desktops forward real key presses to the
+    /// guest. A V that only carries the ⌘ flag arrives there as a bare V
+    /// (a stray "v" or "м" instead of the text), so press ⌘ as its own key
+    /// with short pauses, the way a person does.
+    var frontIsVirtualMachine: Bool {
+        guard let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
+        return Self.vmBundles.contains(id) || Self.vmBundlePrefixes.contains { id.hasPrefix($0) }
+    }
+    static let vmBundles: Set<String> = [
+        "com.utmapp.UTM", "com.vmware.fusion", "org.virtualbox.app.VirtualBoxVM",
+        "org.virtualbox.app.VirtualBox", "com.microsoft.rdc.macos", "com.apple.ScreenSharing",
+    ]
+    static let vmBundlePrefixes = ["com.parallels."]
+
+    func pressPasteSlowly() {
+        syntheticKeyUntil = Date().addingTimeInterval(0.6)
+        let src = CGEventSource(stateID: .combinedSessionState)
+        func post(_ vk: CGKeyCode, _ down: Bool, _ flags: CGEventFlags) {
+            let e = CGEvent(keyboardEventSource: src, virtualKey: vk, keyDown: down)
+            e?.flags = flags
+            e?.post(tap: .cgSessionEventTap)
+            usleep(30_000)
+        }
+        post(55, true, .maskCommand)   // ⌘ down
+        post(9, true, .maskCommand)    // V down
+        post(9, false, .maskCommand)   // V up
+        post(55, false, [])            // ⌘ up
+    }
+
     func pressKey(_ vk: CGKeyCode, _ flags: CGEventFlags) {
         syntheticKeyUntil = Date().addingTimeInterval(0.4)
         let src = CGEventSource(stateID: .combinedSessionState)
@@ -1715,10 +1930,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var deletionStarted = false
         func interrupted() {
             Toast.shared.show(deletionStarted
-                ? L("Откат прерван: прежний текст мог быть стёрт частично. Диктовки — в меню → Последние диктовки.",
-                    "Undo interrupted: previous text may be partly removed. Dictations: menu → Recent dictations.")
-                : L("Откат отменён до удаления. Диктовки — в меню → Последние диктовки.",
-                    "Undo canceled before deletion. Dictations: menu → Recent dictations."))
+                ? L("Откат прерван: прежний текст мог быть стёрт частично. Диктовки — в настройках → Последние диктовки.",
+                    "Undo interrupted: previous text may be partly removed. Dictations: Settings → Recent dictations.")
+                : L("Откат отменён до удаления. Диктовки — в настройках → Последние диктовки.",
+                    "Undo canceled before deletion. Dictations: Settings → Recent dictations."))
             done(false)
         }
         if frontIsTerminal {
@@ -1916,14 +2131,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if replacing == nil && self.take == current && self.recordingInProgress {
                         done(true); retryAfterRecording(); return
                     } else if replacing != nil {
-                        Toast.shared.show(L("Старый текст мог быть удалён; вставка остановлена. Новый текст — в меню → Последние диктовки.",
-                                            "Previous text may be removed; paste stopped. New text: menu → Recent dictations."))
+                        Toast.shared.show(L("Старый текст мог быть удалён; вставка остановлена. Новый текст — в меню → Скопировать последнюю диктовку.",
+                                            "Previous text may be removed; paste stopped. New text: menu → Copy Last Dictation."))
                     } else { self.notifySavedDictation() }
                     done(true); return
                 }
                 guard isOurs() else {
-                    Toast.shared.show(L("Буфер изменился, вставка остановлена. Прежний текст мог быть удалён при замене; диктовка — в меню → Последние диктовки.",
-                                        "Clipboard changed; paste stopped. Previous text may have been removed during replacement; dictation: menu → Recent dictations."))
+                    Toast.shared.show(L("Буфер изменился, вставка остановлена. Прежний текст мог быть удалён при замене; диктовка — в меню → Скопировать последнюю диктовку.",
+                                        "Clipboard changed; paste stopped. Previous text may have been removed during replacement; dictation: menu → Copy Last Dictation."))
                     done(false); return
                 }
                 let result = self.finishPaste(offerChips: offerChips, isOurs: isOurs)
@@ -1937,8 +2152,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else { insert() }
         }, failed: {
             if interruptedByRecording { retryAfterRecording(); return }
-            Toast.shared.show(L("Вставка недоступна. Текст сохранён: меню → Последние диктовки.",
-                                "Paste unavailable. Text saved: menu → Recent dictations."))
+            Toast.shared.show(L("Вставка недоступна. Текст сохранён: меню → Скопировать последнюю диктовку.",
+                                "Paste unavailable. Text saved: menu → Copy Last Dictation."))
         })
     }
 
@@ -1968,7 +2183,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 "Clipboard changed: paste stopped. Check previous text after replacement; dictation is saved in the menu."))
             return false
         }
-        pressKey(9, .maskCommand) // ⌘V
+        if frontIsVirtualMachine { pressPasteSlowly() } else { pressKey(9, .maskCommand) } // ⌘V
         if inField {
             // Буфер возвращаем человеку. Проверять, дошла ли вставка на самом
             // деле, мы пробовали — по каретке и числу символов в поле, — и от

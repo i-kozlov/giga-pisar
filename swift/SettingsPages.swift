@@ -73,6 +73,14 @@ struct DictationPage: View {
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
+                // How to back out of a take (#19): nobody finds Esc on their own.
+                Text(L("Передумал во время диктовки: нажми Esc, ничего не вставится. Или скажи в конце «Писарь, отмена».",
+                       "Changed your mind while dictating: press Esc and nothing is pasted. Or say “Писарь, отмена” at the end."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
                 if currentHotkey().id == "rctrl" {
                     // Клавиши нет ни на встроенной клавиатуре, ни на Magic
                     // Keyboard без блока цифр — на сцене её и не покажешь.
@@ -88,7 +96,37 @@ struct DictationPage: View {
 
             MicCard(model: model)
 
+            SettingsGroup(L("Последние диктовки", "Recent Dictations")) {
+                SettingsRow(icon: "clock.arrow.circlepath", color: sys(.systemIndigo),
+                            title: L("Помнить последние диктовки", "Remember Recent Dictations"),
+                            subtitle: L("До 20 последних, только пока Писарь запущен. На диск не пишутся. Пригодятся, если текст не вставился. Если выключить, Писарь помнит только последнюю, для пункта «Скопировать последнюю диктовку».",
+                                        "Up to 20, only while Pisar is running. Never written to disk. Handy when a text did not get pasted. When off, Pisar keeps only the latest one, for Copy Last Dictation.")) {
+                    Toggle("", isOn: Binding(get: { model.app.rememberDictations },
+                                             set: { _ in model.act { app.toggleRememberDictations() } }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                }
+                RowDivider()
+                SettingsRow(icon: "list.bullet.rectangle", color: sys(.systemGray),
+                            title: L("Сейчас в памяти: \(model.app.recentDictationCount)", "In memory now: \(model.app.recentDictationCount)"),
+                            subtitle: L("Посмотреть их или стереть все сразу.", "View them or erase them all at once.")) {
+                    HStack(spacing: 6) {
+                        Button(L("Показать…", "Show…")) { app.showLastDictation() }
+                        Button(L("Стереть", "Erase")) { model.act { app.clearDictations() } }
+                    }
+                    .disabled(model.app.recentDictationCount == 0)
+                }
+            }
+
             SettingsCard {
+                SettingsRow(icon: "lock.fill", color: sys(.systemBlue),
+                            title: L("Запись без удержания", "Hands-Free Recording"),
+                            subtitle: L("Дважды быстро нажми \(hotkeyInText()), и запись пойдёт сама, держать клавишу не нужно. Удобно для длинного текста. Остановить: нажать \(hotkeyInText()) ещё раз, отменить: Esc. Пока запись идёт сама, на волне видны замочек и время. Через 10 минут запись остановится сама.",
+                                        "Quickly double-press \(hotkeyInText()) and the recording keeps going on its own, no need to hold the key. Handy for long text. Press \(hotkeyInText()) again to stop, Esc to cancel. While it runs on its own, the wave shows a lock and the time. It stops by itself after 10 minutes.")) {
+                    Toggle("", isOn: Binding(get: { model.app.handsFree },
+                                             set: { _ in model.act { app.toggleHandsFree() } }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                }
+                RowDivider()
                 SettingsRow(icon: "textformat.size.smaller", color: sys(.systemBrown),
                             title: L("Упрощать синтаксис", "Simplify Punctuation"),
                             subtitle: L("Если надиктовано одно предложение — вставлять его со строчной буквы и без точки в конце, как реплику в переписке.",

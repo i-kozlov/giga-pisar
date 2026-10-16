@@ -8,11 +8,15 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Диктовка больше не замолкает, если микрофон пропал и вернулся: погас монитор со своим микрофоном, отключилась гарнитура",
-    "Если микрофон не запустился с первого раза, Писарь сам пробует ещё раз",
+    "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
+    "Скажите в конце «Писарь, отмена», и ничего не вставится",
+    "В меню «Скопировать последнюю диктовку», а последние диктовки в настройках: их можно стереть или не запоминать",
+    "Вставка в виртуальных машинах без лишней «v», запись голоса больше не сохраняется в файл",
 ] : [
-    "Dictation no longer goes silent after the microphone disappears and comes back, like a sleeping monitor mic or a disconnected headset",
-    "If the microphone fails to start, Pisar retries on its own",
+    "Hands-free recording: double-press the dictation key, press once more to stop",
+    "Say “Писарь, отмена” at the end and nothing is pasted",
+    "Copy Last Dictation in the menu, and recent dictations in Settings: erase them or do not keep them",
+    "Pasting into virtual machines without a stray \"v\", and recordings are no longer saved to a file",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
