@@ -48,10 +48,10 @@ import Foundation
                 print(try read(url).compile().apply(rest[0]))
             case "add":
                 let (variants, replacement, note) = try parseAdd(rest)
-                try update(url) { dictionary in try add(&dictionary, variants, replacement, note) }
+                try DictionaryStore.update(url, read: read) { dictionary in try add(&dictionary, variants, replacement, note) }
             case "remove":
                 guard rest.count == 1 else { fail("remove принимает одну фразу") }
-                try update(url) { dictionary in try remove(&dictionary, rest[0]) }
+                try DictionaryStore.update(url, read: read) { dictionary in try remove(&dictionary, rest[0]) }
             case "-h", "--help", "help":
                 print(usage)
             default:
@@ -78,38 +78,6 @@ import Foundation
         guard let data = try DictionaryStore.read(url) else { return ReplacementDictionary() }
         do { return try ReplacementDictionary.decode(data) } catch {
             throw DictionaryError("\(url.path): \(error) — исправь файл руками, giga-dict его не перезапишет")
-        }
-    }
-
-    /// Чтение, правка и запись под блокировкой: два параллельных add не теряют друг друга.
-    static func update(_ url: URL, _ change: (inout ReplacementDictionary) throws -> Void) throws {
-        let dir = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let lockPath = dir.appendingPathComponent(".\(url.lastPathComponent).lock").path
-        let lock = open(lockPath, O_CREAT | O_RDWR, 0o600)
-        guard lock >= 0 else { throw DictionaryError("не открыть \(lockPath): \(String(cString: strerror(errno)))") }
-        defer { close(lock) }
-        guard flock(lock, LOCK_EX) == 0 else { throw DictionaryError("не взять блокировку \(lockPath)") }
-        defer { flock(lock, LOCK_UN) }
-
-        if let type = try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType,
-           type == .typeSymbolicLink {
-            throw DictionaryError("\(url.path) — символическая ссылка; giga-dict её не перезаписывает")
-        }
-        var dictionary = try read(url)
-        let before = dictionary
-        try change(&dictionary)
-        guard dictionary != before else { return }
-        let data = try dictionary.encode()
-        let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-        do {
-            try data.write(to: temp, options: .withoutOverwriting)
-            guard rename(temp.path, url.path) == 0 else {
-                throw DictionaryError("не записать \(url.path): \(String(cString: strerror(errno)))")
-            }
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-            throw error
         }
     }
 

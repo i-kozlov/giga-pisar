@@ -107,8 +107,42 @@ struct ReplacementDictionary: Equatable {
         pattern(normalizedVariant(variant)).joined(separator: "\u{1F}")
     }
 
+    /// A run of spaces or hyphens inside a variant becomes one `gap`: in the
+    /// text it matches any run of them or nothing at all, so «гит хаб» also
+    /// catches «гитхаб» and «гит-хаб». Text without a gap in the variant
+    /// stays strict: «кот» never matches «к от».
+    fileprivate static let gap = "\u{1F}gap"
+
+    fileprivate static func isGapChar(_ c: Character) -> Bool {
+        c.isWhitespace || "-‐‑".contains(c)
+    }
+
     fileprivate static func pattern(_ s: String) -> [String] {
-        s.map { folded(String($0)) }
+        var out: [String] = []
+        for c in s {
+            if isGapChar(c) {
+                if let last = out.last, last != gap { out.append(gap) }
+            } else {
+                out.append(folded(String(c)))
+            }
+        }
+        if out.last == gap { out.removeLast() }
+        return out
+    }
+
+    // MARK: reserved word and unsafe characters
+
+    /// «Писарь» calls the Brain. The dictionary must neither create nor eat it,
+    /// otherwise an ordinary phrase turns into a command or commands stop working.
+    static func mentionsReserved(_ s: String) -> Bool {
+        s.range(of: "(?<![\\p{L}\\p{N}])п[еиэ]сар", options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// Line breaks and other control characters would act as Enter in a terminal.
+    static func hasControl(_ s: String) -> Bool {
+        s.unicodeScalars.contains {
+            [.control, .lineSeparator, .paragraphSeparator, .format].contains($0.properties.generalCategory)
+        }
     }
 
     static func normalizedVariant(_ variant: String) -> String {
@@ -132,6 +166,12 @@ struct ReplacementDictionary: Equatable {
                 throw DictionaryError("\(at): заметка длиннее \(Self.maxNoteLength) знаков")
             }
             guard !rule.replacement.isEmpty else { throw DictionaryError("\(at): пустая замена") }
+            guard !Self.hasControl(rule.replacement), !rule.variants.contains(where: Self.hasControl) else {
+                throw DictionaryError("\(at): переносы строк и служебные символы в словаре нельзя")
+            }
+            guard !Self.mentionsReserved(rule.replacement), !rule.variants.contains(where: Self.mentionsReserved) else {
+                throw DictionaryError("\(at): слово «Писарь» занято, им вызывают Мозг. Словарь его не меняет")
+            }
             guard rule.replacement.count <= Self.maxReplacementLength else {
                 throw DictionaryError("\(at): замена длиннее \(Self.maxReplacementLength) знаков")
             }
@@ -170,9 +210,9 @@ struct ReplacementDictionary: Equatable {
             var out = ""
             var i = 0
             while i < chars.count {
-                if let entry = match(at: i, chars: chars, keys: keys) {
+                if let (entry, end) = match(at: i, chars: chars, keys: keys) {
                     out += entry.replacement
-                    i += entry.pattern.count
+                    i = end
                 } else {
                     out.append(chars[i])
                     i += 1
@@ -181,16 +221,29 @@ struct ReplacementDictionary: Equatable {
             return out
         }
 
-        private func match(at i: Int, chars: [Character], keys: [String]) -> Entry? {
+        private func match(at i: Int, chars: [Character], keys: [String]) -> (Entry, Int)? {
             guard let candidates = byFirst[keys[i]] else { return nil }
             for entry in candidates {
-                let end = i + entry.pattern.count
-                guard end <= chars.count, keys[i..<end].elementsEqual(entry.pattern) else { continue }
+                guard let end = end(of: entry.pattern, at: i, chars: chars, keys: keys) else { continue }
                 if i > 0, isWord(chars[i - 1]) { continue }
                 if end < chars.count, isWord(chars[end]) { continue }
-                return entry
+                return (entry, end)
             }
             return nil
+        }
+
+        /// Where the variant ends in the text, or nil if it is not here.
+        private func end(of pattern: [String], at start: Int, chars: [Character], keys: [String]) -> Int? {
+            var j = start
+            for element in pattern {
+                if element == ReplacementDictionary.gap {
+                    while j < chars.count, ReplacementDictionary.isGapChar(chars[j]) { j += 1 }
+                } else {
+                    guard j < chars.count, keys[j] == element else { return nil }
+                    j += 1
+                }
+            }
+            return j
         }
     }
 
@@ -206,7 +259,9 @@ struct ReplacementDictionary: Equatable {
         var byFirst: [String: [Compiled.Entry]] = [:]
         var used = Set<String>()
         for rule in rules {
-            for variant in rule.variants {
+            // validate() refuses these; a rule that slipped in anyway still never runs.
+            if Self.hasControl(rule.replacement) || Self.mentionsReserved(rule.replacement) { continue }
+            for variant in rule.variants where !Self.hasControl(variant) && !Self.mentionsReserved(variant) {
                 let key = Self.key(variant)
                 guard used.insert(key).inserted else { continue }
                 let pattern = Self.pattern(Self.normalizedVariant(variant))
@@ -258,6 +313,39 @@ final class DictionaryStore {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         return try handle.read(upToCount: ReplacementDictionary.maxFileBytes + 1) ?? Data()
+    }
+
+    /// Чтение, правка и запись под блокировкой: два параллельных add не теряют друг друга.
+    static func update(_ url: URL, read: (URL) throws -> ReplacementDictionary,
+                       _ change: (inout ReplacementDictionary) throws -> Void) throws {
+        let dir = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let lockPath = dir.appendingPathComponent(".\(url.lastPathComponent).lock").path
+        let lock = open(lockPath, O_CREAT | O_RDWR, 0o600)
+        guard lock >= 0 else { throw DictionaryError("не открыть \(lockPath): \(String(cString: strerror(errno)))") }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { throw DictionaryError("не взять блокировку \(lockPath)") }
+        defer { flock(lock, LOCK_UN) }
+
+        if let type = try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType,
+           type == .typeSymbolicLink {
+            throw DictionaryError("\(url.path) — символическая ссылка; giga-dict её не перезаписывает")
+        }
+        var dictionary = try read(url)
+        let before = dictionary
+        try change(&dictionary)
+        guard dictionary != before else { return }
+        let data = try dictionary.encode()
+        let temp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        do {
+            try data.write(to: temp, options: .withoutOverwriting)
+            guard rename(temp.path, url.path) == 0 else {
+                throw DictionaryError("не записать \(url.path): \(String(cString: strerror(errno)))")
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
     }
 
     /// Снимок правил для этой диктовки и описание поломки, если она новая.

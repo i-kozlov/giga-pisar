@@ -38,8 +38,8 @@ import Foundation
         print("PASS NFC, ё stays distinct from е")
 
         // Longest match at a position wins; replacement output is never rescanned.
-        let o = dict([(["гига"], "Giga"), (["гига писарь"], "Гига Писарь")])
-        expect(o.apply("гига писарь и гига"), "Гига Писарь и Giga", "longest first")
+        let o = dict([(["гига"], "Giga"), (["гига чат"], "GigaChat")])
+        expect(o.apply("гига чат и гига"), "GigaChat и Giga", "longest first")
         let c = dict([(["кот"], "собака"), (["собака"], "волк")])
         expect(c.apply("кот и собака"), "собака и волк", "no cascade")
         let swap = dict([(["а1"], "б1"), (["б1"], "а1")])
@@ -74,14 +74,6 @@ import Foundation
         expect(String(nfc.apply("и\u{0306} кот").unicodeScalars.map(Character.init)), "й Cat", "nfc output")
         precondition(Array(nfc.apply("и\u{0306} кот").unicodeScalars) == Array("й Cat".unicodeScalars), "NFC scalars")
         print("PASS per-character case folding, NFC output")
-
-        // Pisar address: the dictionary may create or remove it; that is accepted behaviour.
-        let p = dict([(["пихарь"], "писарь")])
-        expect(p.apply("текст, пихарь исправь"), "текст, писарь исправь", "creates address")
-        expect(p.apply("наш пихарь сегодня занят"), "наш писарь сегодня занят", "address in the middle")
-        let q = dict([(["писарь"], "помощник")])
-        expect(q.apply("текст, писарь исправь"), "текст, помощник исправь", "removes address")
-        print("PASS Pisar address created and removed as configured")
 
         // File format: JSON5 comments and trailing commas, strict schema.
         let json5 = """
@@ -190,5 +182,43 @@ import Foundation
         try! FileManager.default.removeItem(at: url)
         check("кот", "кот", problem: false, "deleted file clears the dictionary")
         print("PASS store: missing, valid, broken, fixed, oversized, deleted")
+
+        // Spaces and hyphens inside a variant are optional in the text; none are invented elsewhere.
+        let gap = dict([(["гит хаб"], "GitHub"), (["кот"], "Cat")])
+        expect(gap.apply("гит хаб, гитхаб, гит-хаб, гит  хаб"), "GitHub, GitHub, GitHub, GitHub", "gap variants")
+        expect(gap.apply("гитхабовский к от"), "гитхабовский к от", "gap keeps word boundaries, no gaps invented")
+        let hyphen = dict([(["гит-хаб"], "GitHub")])
+        expect(hyphen.apply("гитхаб и гит хаб"), "GitHub и GitHub", "hyphen in a variant is a gap too")
+        print("PASS gaps: spaces and hyphens inside a variant")
+
+        // The address «Писарь» is reserved; line breaks and control characters are refused.
+        rejects(#"{"version": 1, "rules": [{"variants": ["пихарь"], "replacement": "Писарь"}]}"#, "reserved replacement")
+        rejects(#"{"version": 1, "rules": [{"variants": ["писаря"], "replacement": "X"}]}"#, "reserved variant")
+        rejects(#"{"version": 1, "rules": [{"variants": ["гига песарь"], "replacement": "X"}]}"#, "reserved inside a phrase")
+        rejects(#"{"version": 1, "rules": [{"variants": ["привет"], "replacement": "привет\nrm -rf ~"}]}"#, "newline in replacement")
+        rejects(#"{"version": 1, "rules": [{"variants": ["при\tвет"], "replacement": "x"}]}"#, "tab in variant")
+        rejects(#"{"version": 1, "rules": [{"variants": ["x"], "replacement": "a\u202Eb"}]}"#, "bidi override")
+        var sneaky = ReplacementDictionary()
+        sneaky.rules = [DictionaryRule(variants: ["пихарь"], replacement: "Писарь"),
+                        DictionaryRule(variants: ["эхо"], replacement: "echo\nx")]
+        expect(sneaky.compile().apply("пихарь эхо"), "пихарь эхо", "unsafe rules never run even unvalidated")
+        _ = dict([(["описание"], "Description")]) // «писа» inside a longer word is not the address
+        print("PASS reserved «Писарь», control characters refused")
+
+        // Case forms for a new word.
+        func forms(_ h: String, _ w: String) -> String {
+            WordForms.suggest(heard: h, write: w).map { "\($0.heard)>\($0.write)" }.joined(separator: " ")
+        }
+        expect(forms("джира", "Jira"), "джиры>Jira джире>Jira джиру>Jira джирой>Jira", "feminine, Latin replacement")
+        expect(forms("саша", "Александр"), "саши>Александра саше>Александру сашу>Александра сашей>Александром", "declined name")
+        expect(forms("гитхаб", "GitHub"), "гитхаба>GitHub гитхабу>GitHub гитхабом>GitHub гитхабе>GitHub", "masculine")
+        expect(forms("гит хаб", "GitHub"), "", "phrase")
+        expect(forms("опен и Ай", "Open AI"), "", "phrase with a short last word")
+        expect(forms("чат", "Chat"), "", "short word")
+        expect(forms("мария", "Мария"), "марии>Марии марию>Марию марией>Марией", "-ия")
+        expect(forms("кино", "Kino"), "", "indeclinable")
+        expect(forms("НАСА", "NASA"), "", "abbreviation")
+        expect(forms("open ai", "OpenAI"), "", "Latin heard")
+        print("PASS word forms")
     }
 }

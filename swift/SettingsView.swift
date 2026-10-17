@@ -14,7 +14,9 @@ import SwiftUI
 // MARK: разделы
 
 enum SettingsSection: Int, CaseIterable, Identifiable {
-    case general, dictation, wave, brain, about
+    // Raw values are stored in "settingsTab": new sections get new numbers,
+    // the order of the cases is the order in the sidebar.
+    case general = 0, dictation = 1, dictionary = 5, wave = 2, brain = 3, about = 4
 
     var id: Int { rawValue }
 
@@ -22,6 +24,7 @@ enum SettingsSection: Int, CaseIterable, Identifiable {
         switch self {
         case .general: return L("Основные", "General")
         case .dictation: return L("Диктовка", "Dictation")
+        case .dictionary: return L("Словарь", "Dictionary")
         case .wave:      return L("Волна голоса", "Voice Wave")
         case .brain:   return L("Мозг", "Brain")
         case .about:   return L("О программе", "About")
@@ -32,6 +35,7 @@ enum SettingsSection: Int, CaseIterable, Identifiable {
         switch self {
         case .general: return "gear"
         case .dictation: return "mic.fill"
+        case .dictionary: return "character.book.closed.fill"
         case .wave:      return "waveform"
         case .brain:   return "brain.head.profile"
         case .about:   return "info"
@@ -42,6 +46,7 @@ enum SettingsSection: Int, CaseIterable, Identifiable {
         switch self {
         case .general: return Color(nsColor: .systemGray)
         case .dictation: return Color(nsColor: .systemRed)
+        case .dictionary: return Color(nsColor: .systemOrange)
         case .wave:      return Color(nsColor: .systemIndigo)
         case .brain:   return Color(nsColor: .systemPurple)
         case .about:   return Color(nsColor: .systemBlue)
@@ -66,6 +71,9 @@ enum SettingsSection: Int, CaseIterable, Identifiable {
         case .dictation:
             return L("Зажми клавишу, говори, отпусти: текст появится там, где курсор.",
                      "Hold the key, speak, release: the text appears at the cursor.")
+        case .dictionary:
+            return L("Писарь иногда пишет имена, термины и английские названия не так, как нужно. Добавь их сюда один раз, и дальше они будут писаться правильно.",
+                     "Pisar sometimes spells names, terms and English words its own way. Add them here once and they will be written right from then on.")
         case .wave:
             return L("Пока идёт диктовка, на экране видно, что Писарь слышит голос.",
                      "While you dictate, the screen shows that Pisar hears your voice.")
@@ -122,6 +130,9 @@ final class SettingsModel: ObservableObject {
         cloudState = state
         return state
     }
+
+    /// The dictionary table outlives redraws: it holds unsaved typing.
+    lazy var dictionary = DictionaryEditor()
 
     init(app: GigaApp) { self.app = app }
 
@@ -322,6 +333,7 @@ struct SettingsDetail: View {
         switch model.section {
         case .general:   GeneralPage(model: model)
         case .dictation: DictationPage(model: model)
+        case .dictionary: DictionaryPage(model: model)
         case .wave:      WavePage(model: model)
         case .brain:     BrainPage(model: model)
         case .about:     AboutPage(model: model)

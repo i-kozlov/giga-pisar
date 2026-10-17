@@ -12,7 +12,7 @@ import SwiftUI
 typealias GigaApp = App
 
 final class SettingsWindow: NSObject, NSWindowDelegate {
-    enum Tab: Int, CaseIterable { case general, brain, edit, about }
+    enum Tab: Int, CaseIterable { case general, brain, edit, about, dictionary }
 
     private weak var app: App?
     private var window: NSWindow?
@@ -54,6 +54,13 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
 
     /// Проценты качающейся модели: вид перечитает строку сам.
     func updateDownload() { model?.bump() }
+
+    /// Settings → Dictionary with the "new word" sheet already open.
+    func addToDictionary(_ heard: String) {
+        show(tab: .dictionary)
+        model?.dictionary.reload()
+        model?.dictionary.adding = AddWordRequest(heard: heard)
+    }
 
     // MARK: окно
 
@@ -116,6 +123,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         case .brain:   return .brain
         case .edit:    return .brain   // правка выделенного переехала в «Мозг»
         case .about:   return .about
+        case .dictionary: return .dictionary
         }
     }
 

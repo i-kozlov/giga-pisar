@@ -117,7 +117,7 @@ let BUSY_BAR: CGFloat = 0.35
 
 // MARK: - Приложение
 
-final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDelegate {
     var statusItem: NSStatusItem!
     let mic = Mic()
     var recStart: Date?
@@ -244,6 +244,25 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             recoveredTakes.keys.sorted().reversed().flatMap { recoveredTakes[$0] ?? [] }.joined(separator: "\n\n———\n\n")
     }
 
+    /// Right-click on a selected word in recent dictations: put it in the dictionary.
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        let picked = (view.string as NSString).substring(with: view.selectedRange())
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !picked.isEmpty, picked.count <= 200, !picked.contains("\n") else { return menu }
+        let item = NSMenuItem(title: L("Добавить в словарь…", "Add to Dictionary…"),
+                              action: #selector(addSelectionToDictionary(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = picked
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc func addSelectionToDictionary(_ sender: NSMenuItem) {
+        guard let picked = sender.representedObject as? String else { return }
+        settings.addToDictionary(picked)
+    }
+
     @objc func showLastDictation() {
         if recoveryWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 300),
@@ -256,6 +275,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = true
             let text = scroll.documentView as! NSTextView
             text.isEditable = false; text.isSelectable = true
+            text.delegate = self
             text.autoresizingMask = [.width]; text.isVerticallyResizable = true
             window.contentView = scroll
             recoveryWindow = window; window.center()
@@ -1738,7 +1758,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let output = text
             var corrected = text
             var dictionaryProblem: String?
-            if let raw = text {
+            if let raw = text, DictionaryEditor.enabled {
                 let (rules, problem) = self?.dictionary.refresh() ?? (ReplacementDictionary().compile(), nil)
                 corrected = rules.apply(raw)
                 dictionaryProblem = problem
