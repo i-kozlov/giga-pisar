@@ -19,7 +19,7 @@ final class Mic {
     /// Микрофон между записями НЕ открыт (оранжевой точки нет) — устройство
     /// включается только на время start()…stop().
     private var engine: AVAudioEngine?
-    private var engineDevice: AudioDeviceID = 0 // default input the cached engine was built on
+    private var engineDevice: AudioDeviceID = 0 // input the cached engine was built on
     private var configurationChanged = false
     private var chunks: [[Float]] = []   // куски записи в родной частоте, моно
     private var nativeRate: Double = 0
@@ -31,6 +31,9 @@ final class Mic {
     private var engineActive = false // audioQueue only
     private let startOverride: (() throws -> Void)?
     private let stopOverride: (() -> [Float])?
+
+    /// Microphones came or went, or the system default changed. Main queue.
+    var onDevicesChange: (() -> Void)?
 
     /// Громкость для волны, 0…1. Считается в звуковом потоке, читается
     /// из главного — живёт под тем же локом, что и куски записи.
@@ -90,6 +93,7 @@ final class Mic {
                                                   mElement: kAudioObjectPropertyElementMain)
             AudioObjectAddPropertyListenerBlock(system, &addr, audioQueue) { [weak self] _, _ in
                 self?.dropEngine()
+                DispatchQueue.main.async { self?.onDevicesChange?() }
             }
         }
     }
@@ -110,6 +114,77 @@ final class Mic {
         let err = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr,
                                              0, nil, &size, &device)
         return err == noErr ? device : 0
+    }
+
+    // MARK: выбранный микрофон
+
+    /// UID выбранного микрофона. nil — использовать системный вход.
+    static var chosenUID: String? {
+        get { UserDefaults.standard.string(forKey: "micDeviceUID") }
+        set { UserDefaults.standard.set(newValue, forKey: "micDeviceUID") }
+    }
+    /// Имя выбранного — чтобы показать его, пока устройство отключено.
+    static var chosenName: String? {
+        get { UserDefaults.standard.string(forKey: "micDeviceName") }
+        set { UserDefaults.standard.set(newValue, forKey: "micDeviceName") }
+    }
+
+    struct InputDevice {
+        let id: AudioDeviceID
+        let uid: String
+        let name: String
+    }
+
+    /// Все устройства, у которых есть хотя бы один канал ввода.
+    static func inputDevices() -> [InputDevice] {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr, size > 0
+        else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids.compactMap { id in
+            guard inputChannels(id) > 0,
+                  let uid = stringProperty(id, kAudioDevicePropertyDeviceUID),
+                  let name = stringProperty(id, kAudioObjectPropertyName)
+            else { return nil }
+            return InputDevice(id: id, uid: uid, name: name)
+        }
+    }
+
+    private static func inputChannels(_ id: AudioDeviceID) -> Int {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
+                                              mScope: kAudioDevicePropertyScopeInput,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size),
+                                                   alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { raw.deallocate() }
+        let list = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, list) == noErr else { return 0 }
+        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
+    }
+
+    private static func stringProperty(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+        var addr = AudioObjectPropertyAddress(mSelector: selector,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr,
+              let value else { return nil }
+        return value.takeRetainedValue() as String
+    }
+
+    /// Возвращает ID выбранного входа, если он доступен в списке устройств.
+    /// nil означает, что вызывающий код должен использовать системный вход.
+    private static func chosenInputDevice() -> AudioDeviceID? {
+        guard let uid = chosenUID else { return nil }
+        return inputDevices().first { $0.uid == uid }?.id
     }
 
     /// Запускает запись. Бросает, если устройство не завелось, — тогда
@@ -136,9 +211,10 @@ final class Mic {
     }
 
     private func startEngine() throws {
-        let device = Self.defaultInputDevice()
+        let chosen = Self.chosenInputDevice()
+        let device = chosen ?? Self.defaultInputDevice()
         if engine != nil, device != engineDevice { engine = nil }
-        do { try startEngine(on: device) } catch {
+        do { try startEngine(on: device, assign: chosen != nil) } catch {
             // A cached engine can hold a device that is gone even when no
             // notification arrived, and a fresh one can catch CoreAudio
             // mid-switch right after a device vanished. Retry once from
@@ -146,13 +222,32 @@ final class Mic {
             NSLog("Гига Писарь: audio engine failed to start, rebuilding: \(error)")
             engine = nil
             Thread.sleep(forTimeInterval: 0.2)
-            try startEngine(on: Self.defaultInputDevice())
+            let retry = Self.chosenInputDevice()
+            try startEngine(on: retry ?? Self.defaultInputDevice(), assign: retry != nil)
         }
     }
 
-    private func startEngine(on device: AudioDeviceID) throws {
+    /// assign включён, когда выбранный вход доступен: назначаем его свежему движку.
+    /// При false оставляем выбор системного входа AVAudioEngine.
+    private func startEngine(on device: AudioDeviceID, assign: Bool) throws {
+        guard device != 0 else { throw OrtError.failed("в системе нет микрофона") }
+        let fresh = engine == nil
         let e = engine ?? AVAudioEngine()
         let input = e.inputNode
+        // Point the fresh engine at the chosen device before asking for the
+        // format: the format is the device's.
+        if fresh, assign {
+            guard let unit = input.audioUnit else {
+                throw OrtError.failed("нет аудиоблока для выбора микрофона")
+            }
+            var id = device
+            let err = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                           kAudioUnitScope_Global, 0, &id,
+                                           UInt32(MemoryLayout<AudioDeviceID>.size))
+            guard err == noErr else {
+                throw OrtError.failed("микрофон не выбрался: \(err)")
+            }
+        }
         let fmt = input.inputFormat(forBus: 0) // родной формат устройства
         guard fmt.sampleRate > 0, fmt.channelCount > 0 else {
             engine = nil

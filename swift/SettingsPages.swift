@@ -94,6 +94,8 @@ struct DictationPage: View {
                 }
             }
 
+            MicCard(model: model)
+
             SettingsGroup(L("Последние диктовки", "Recent Dictations")) {
                 SettingsRow(icon: "clock.arrow.circlepath", color: sys(.systemIndigo),
                             title: L("Помнить последние диктовки", "Remember Recent Dictations"),
@@ -151,6 +153,46 @@ struct DictationPage: View {
                                              set: { _ in model.act { app.toggleHush() } }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.mini)
                 }
+            }
+        }
+    }
+}
+
+struct MicCard: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        let devices = Mic.inputDevices()
+        let chosen = Mic.chosenUID ?? ""
+        let missing = !chosen.isEmpty && !devices.contains { $0.uid == chosen }
+        SettingsCard {
+            SettingsRow(icon: "mic.fill", color: sys(.systemOrange),
+                        title: L("Микрофон", "Microphone"),
+                        subtitle: missing
+                            ? L("Не подключён — пока пишем с системного.",
+                                "Not connected, so the system one is used for now.")
+                            : chosen.isEmpty
+                                ? L("macOS меняет системный сама, например при подключении AirPods.",
+                                    "macOS switches the system one on its own, for example when AirPods connect.")
+                                : L("Используется вместо системного.",
+                                    "Used instead of the system one.")) {
+                Picker("", selection: Binding(
+                    get: { chosen },
+                    set: { uid in model.act {
+                        Mic.chosenUID = uid.isEmpty ? nil : uid
+                        Mic.chosenName = devices.first { $0.uid == uid }?.name
+                    } })) {
+                    Text(L("Как в системе", "Same as System")).tag("")
+                    Divider()
+                    ForEach(devices, id: \.uid) { d in Text(d.name).tag(d.uid) }
+                    if missing {
+                        Text(L("\(Mic.chosenName ?? chosen) — не подключён",
+                               "\(Mic.chosenName ?? chosen) — not connected")).tag(chosen)
+                    }
+                }
+                .labelsHidden()
+                // Ограничиваем ширину Picker, чтобы длинное имя не растягивало строку.
+                .frame(maxWidth: 220)
             }
         }
     }
