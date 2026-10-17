@@ -244,6 +244,8 @@ struct BrainPage: View {
 
     /// Куда вернуться, когда Мозг включают обратно.
     @AppStorage("brainLastChoice") private var lastChoice = "qwen"
+    @State private var editingPrompt = false
+    @State private var editingChips = false
 
     var body: some View {
         let app = model.app
@@ -360,6 +362,28 @@ struct BrainPage: View {
                             .labelsHidden().fixedSize()
                         }
                     }
+
+                    // Optional: nobody has to touch these, defaults work as before.
+                    SettingsCard {
+                        SettingsRow(icon: "text.quote", color: sys(.systemGray),
+                                    title: L("Инструкция для Мозга", "Instruction for the Brain"),
+                                    subtitle: Brain.customPrompt == nil
+                                        ? L("Стандартная: убрать слова-паразиты и повторы, расставить знаки. Можно посмотреть и написать свою.",
+                                            "Standard: remove filler words and repeats, fix punctuation. You can view it and write your own.")
+                                        : L("Своя.", "Your own.")) {
+                            Button(L("Изменить…", "Edit…")) { editingPrompt = true }
+                        }
+                        if b.chipsEnabled {
+                            RowDivider()
+                            SettingsRow(icon: "list.number", color: sys(.systemGray),
+                                        title: L("Пункты менюшки", "Menu Items"),
+                                        subtitle: Chips.all.map(\.title).joined(separator: " · ")) {
+                                Button(L("Изменить…", "Edit…")) { editingChips = true }
+                            }
+                        }
+                    }
+                    .sheet(isPresented: $editingPrompt, onDismiss: { model.bump() }) { PromptSheet() }
+                    .sheet(isPresented: $editingChips, onDismiss: { model.bump() }) { ChipsSheet() }
                 }
             }
 

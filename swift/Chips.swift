@@ -21,12 +21,34 @@ import AppKit
 final class Chips {
     static let shared = Chips()
 
-    struct Chip {
-        let title: String
-        let icon: String      // символ SF Symbols, как в системных меню
-        let command: String
+    struct Chip: Codable, Equatable {
+        var title: String
+        var icon: String = "sparkle"  // символ SF Symbols, как в системных меню
+        var command: String
     }
+    /// Digits pick items, so at most nine.
+    static let maxCount = 9
+
+    /// The person's own items from Settings, or the standard three.
     static var all: [Chip] {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: "brainChipsList"),
+                  let list = try? JSONDecoder().decode([Chip].self, from: data),
+                  !list.isEmpty else { return standard }
+            return Array(list.prefix(maxCount))
+        }
+        set {
+            let list = Array(newValue.prefix(maxCount))
+            if list.isEmpty || list == standard {
+                UserDefaults.standard.removeObject(forKey: "brainChipsList")
+            } else if let data = try? JSONEncoder().encode(list) {
+                UserDefaults.standard.set(data, forKey: "brainChipsList")
+            }
+        }
+    }
+    static var isCustom: Bool { UserDefaults.standard.data(forKey: "brainChipsList") != nil }
+
+    static var standard: [Chip] {
         [Chip(title: L("Причесать", "Tidy up"), icon: "wand.and.sparkles",
               command: "причеши текст: убери слова-паразиты и повторы, поправь пунктуацию и очевидные ошибки; смысл, порядок мыслей и лексику не меняй"),
          Chip(title: L("Сократить", "Make it shorter"),
@@ -473,12 +495,8 @@ final class Chips {
         case 53: // Esc
             DispatchQueue.main.async { [weak self] in self?.hide() }
             return nil
-        case 18, 83: // «1» (и на цифровом блоке)
-            return pickByNumber(0, event)
-        case 19, 84: // «2»
-            return pickByNumber(1, event)
-        case 20, 85: // «3»
-            return pickByNumber(2, event)
+        case let k where Self.digitKeys[k] != nil: // «1»…«9», и на цифровом блоке
+            return pickByNumber(Self.digitKeys[k]!, event)
         case 55, 56, 58, 59, 61, 62, 63: // модификаторы меню не гасят
             return Unmanaged.passUnretained(event)
         case 51, 117: // Backspace и Delete: стирает текст — подсказка не нужна
@@ -489,6 +507,12 @@ final class Chips {
             return Unmanaged.passUnretained(event)
         }
     }
+
+    /// Key codes of «1»…«9» on the main row and on the keypad → item index.
+    private static let digitKeys: [Int64: Int] = [
+        18: 0, 19: 1, 20: 2, 21: 3, 23: 4, 22: 5, 26: 6, 28: 7, 25: 8,
+        83: 0, 84: 1, 85: 2, 86: 3, 87: 4, 88: 5, 89: 6, 91: 7, 92: 8,
+    ]
 
     /// Цифра — мгновенный выбор пункта, как в меню консольных программ.
     /// Съедаем клавишу, чтобы цифра не упала в текст.

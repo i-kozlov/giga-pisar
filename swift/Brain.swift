@@ -682,6 +682,22 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
     вокруг него.
     """
 
+    /// The person's own instruction for dictated text, nil for the standard
+    /// one. The command is still appended to it, as to the standard one.
+    static var customPrompt: String? {
+        get {
+            let s = UserDefaults.standard.string(forKey: "brainPrompt")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (s?.isEmpty ?? true) ? nil : s
+        }
+        set {
+            let s = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if s.isEmpty || s == standardPrompt { UserDefaults.standard.removeObject(forKey: "brainPrompt") }
+            else { UserDefaults.standard.set(s, forKey: "brainPrompt") }
+        }
+    }
+    static var standardPrompt: String { systemPrompt }
+
     private static let systemPrompt = """
     Ты обрабатываешь надиктованный голосом текст перед вставкой. Правила: \
     убери слова-паразиты и оговорки (э, ну, типа, вот, как бы), убери повторы \
@@ -830,7 +846,7 @@ final class Brain: NSObject, URLSessionDownloadDelegate {
         // «Команда: …», и нейронка иногда обрабатывала её как часть текста
         // (перевела на английский вместе с текстом — «Command: …»).
         let messages: [[String: String]] = [
-            ["role": "system", "content": (mode == .selection ? Self.selectionPrompt : Self.systemPrompt)
+            ["role": "system", "content": (mode == .selection ? Self.selectionPrompt : Self.customPrompt ?? Self.systemPrompt)
                 + "\n\nКоманда пользователя к тексту: \(command)."],
             ["role": "user", "content": body],
         ]
