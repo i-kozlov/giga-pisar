@@ -169,7 +169,7 @@ struct MicCard: View {
             SettingsRow(icon: "mic.fill", color: sys(.systemOrange),
                         title: L("Микрофон", "Microphone"),
                         subtitle: missing
-                            ? L("Не подключён — пока пишем с системного.",
+                            ? L("Не подключён, пока пишем с системного.",
                                 "Not connected, so the system one is used for now.")
                             : chosen.isEmpty
                                 ? L("macOS меняет системный сама, например при подключении AirPods.",
@@ -186,8 +186,8 @@ struct MicCard: View {
                     Divider()
                     ForEach(devices, id: \.uid) { d in Text(d.name).tag(d.uid) }
                     if missing {
-                        Text(L("\(Mic.chosenName ?? chosen) — не подключён",
-                               "\(Mic.chosenName ?? chosen) — not connected")).tag(chosen)
+                        Text(L("\(Mic.chosenName ?? chosen) (не подключён)",
+                               "\(Mic.chosenName ?? chosen) (not connected)")).tag(chosen)
                     }
                 }
                 .labelsHidden()

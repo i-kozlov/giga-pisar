@@ -8,15 +8,15 @@ import AppKit
 
 /// Что изменилось в ЭТОЙ версии. Обновлять при каждом выпуске вместе с номером.
 let WHATS_NEW: [String] = uiIsRussian ? [
-    "Запись без удержания: дважды нажмите клавишу диктовки, остановить ещё одним нажатием",
-    "Скажите в конце «Писарь, отмена», и ничего не вставится",
-    "В меню «Скопировать последнюю диктовку», а последние диктовки в настройках: их можно стереть или не запоминать",
-    "Вставка в виртуальных машинах без лишней «v», запись голоса больше не сохраняется в файл",
+    "Словарь замен в настройках: научите Писаря писать слова так, как вам нужно",
+    "Выбор микрофона в настройках",
+    "Своя инструкция для Мозга и свои пункты в менюшке у курсора",
+    "Окно обновления показывает, что нового, и начинает скачивать только по кнопке «Обновить»",
 ] : [
-    "Hands-free recording: double-press the dictation key, press once more to stop",
-    "Say “Писарь, отмена” at the end and nothing is pasted",
-    "Copy Last Dictation in the menu, and recent dictations in Settings: erase them or do not keep them",
-    "Pasting into virtual machines without a stray \"v\", and recordings are no longer saved to a file",
+    "A replacement dictionary in Settings: teach Pisar to spell words your way",
+    "Choose the microphone in Settings",
+    "Your own Brain instruction and your own items in the menu at the cursor",
+    "The update window shows what is new and downloads only when you click Update",
 ]
 
 /// Разбор поля notes из манифеста: словарь по языкам, список или строка.
