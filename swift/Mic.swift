@@ -31,6 +31,7 @@ final class Mic {
     private var engineActive = false // audioQueue only
     private let startOverride: (() throws -> Void)?
     private let stopOverride: (() -> [Float])?
+    private static var pauseBetween: Bool { UserDefaults.standard.bool(forKey: "micPauseBetween") }
 
     /// Microphones came or went, or the system default changed. Main queue.
     var onDevicesChange: (() -> Void)?
@@ -333,7 +334,7 @@ final class Mic {
     private func stopEngine() -> [Float]? {
         guard engineActive, let e = engine else { return nil }
         e.inputNode.removeTap(onBus: 0)
-        e.stop() // сам движок оставляем — следующий старт быстрее
+        if Self.pauseBetween { e.pause() } else { e.stop() } // сам движок оставляем — следующий старт быстрее
         engineActive = false
         lock.lock()
         let recorded = chunks
