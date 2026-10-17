@@ -34,8 +34,8 @@ func parseNotes(_ raw: Any?) -> [String] {
 
 /// Плашка «Что нового в X» для NSAlert.accessoryView: мягкая подложка со
 /// скруглением, заголовок мелким полужирным, пункты с висячим маркером.
-func whatsNewView(version: String, notes: [String]) -> NSView? {
-    bulletsView(header: L("Что нового в \(version)", "What's new in \(version)"), lines: notes)
+func whatsNewView(version: String, notes: [String], width: CGFloat = 300) -> NSView? {
+    bulletsView(header: L("Что нового в \(version)", "What's new in \(version)"), lines: notes, width: width)
 }
 
 /// Та же плашка с любым заголовком и любыми пунктами (инструкция к Мозгу).

@@ -167,6 +167,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
     let modelWindow = UpdateWindow()    // загрузка модели распознавания
     weak var updMenuItem: NSMenuItem?   // «Качаю версию…» с живыми процентами
     var updateDownloads: [URL] = []
+    var updateNotes: [String] = []      // «что нового» в свежей версии, из манифеста
 
     /// Последняя удачная диктовка — страховка на случай «курсор был не в поле».
     var lastText: String?
@@ -590,7 +591,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
             updMenuItem = item
         } else if let upd = updateAvailable {
             menu.addItem(mkItem(L("Доступна версия \(upd), обновить", "Version \(upd) Available, Update"),
-                                icon: "arrow.down.circle", action: #selector(startSelfUpdate)))
+                                icon: "arrow.down.circle", action: #selector(offerUpdate)))
         }
         let prefs = mkItem(L("Настройки…", "Settings…"), sub: L("клавиша, звук, облако и всё остальное", "key, sound, cloud and everything else"),
                            icon: "gearshape", action: #selector(openSettings))
@@ -704,6 +705,15 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
         settingsChanged()
     }
 
+    /// Окно «Вышла версия X»: что нового, «Позже» / «Обновить».
+    @objc func offerUpdate() {
+        if SelfUpdate.inProgress { startSelfUpdate(); return }
+        guard let ver = updateAvailable else { return }
+        updateWindow.offer(version: ver, current: APP_VERSION, notes: updateNotes) { [weak self] in
+            self?.startSelfUpdate()
+        }
+    }
+
     /// Само: скачает выпуск, проверит подпись, подменит себя и перезапустится.
     @objc func startSelfUpdate() {
         // уже идёт — не запускаем второе, а показываем, как идёт первое
@@ -712,6 +722,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
             return
         }
         guard !updateDownloads.isEmpty, let ver = updateAvailable else {
+            updateWindow.hide()
             openReleases() // выпуск без архива — только руками
             return
         }
@@ -721,6 +732,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
         // страницу со списком файлов. Правильный выход один: переехать в
         // Программы и обновиться уже оттуда.
         if !canUpdateInPlace {
+            updateWindow.hide()
             let a = NSAlert()
             a.messageText = L("Сначала перенесу в Программы", "Moving to Applications first")
             a.informativeText = L("Приложение запущено прямо из архива или «Загрузок», и macOS не даёт обновить его на месте. Я перенесу себя в Программы, перезапущусь оттуда и сразу обновлюсь до \(ver).",
@@ -736,7 +748,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
             SelfUpdate.cancel()
             self?.buildMenu()
         }
-        updateWindow.show(version: ver)
+        updateWindow.show(version: ver, notes: updateNotes)
         updateWindow.downloading(percent: 0)
         buildMenu() // пункт «Доступна версия…» превращается в «Качаю…»
         SelfUpdate.run(zips: updateDownloads, version: ver, report: { [weak self] stage in
@@ -816,6 +828,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.updateDownloads = info?.downloads ?? []
+                self.updateNotes = info?.notes ?? []
                 let latest = info?.version
                 guard let latest else {
                     if !silent {
@@ -851,14 +864,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
                 if autoInstall { self.startSelfUpdate(); return } // человек уже сказал «обновиться»
                 if !silent {
                     UserDefaults.standard.set(latest, forKey: "lastUpdateNotified")
-                    let a = NSAlert()
-                    a.messageText = L("Вышла версия \(latest)", "Version \(latest) is out")
-                    a.informativeText = L("У тебя \(APP_VERSION). Приложение скачает выпуск, проверит подпись, поставит и перезапустится само.",
-                                          "You have \(APP_VERSION). The app will download the release, verify its signature, install it and relaunch itself.")
-                    a.accessoryView = whatsNewView(version: latest, notes: info?.notes ?? [])
-                    a.addButton(withTitle: L("Обновить", "Update"))
-                    a.addButton(withTitle: L("Позже", "Later"))
-                    if a.runModal() == .alertFirstButtonReturn { self.startSelfUpdate() }
+                    self.offerUpdate()
                 }
             }
         }
