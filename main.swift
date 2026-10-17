@@ -2225,7 +2225,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextViewDe
             // отвечает Accessibility как попало, и проверка объявляла неудачу
             // поверх удавшейся вставки.
             // Менюшка: сырой текст вставлен, предложить причесать.
-            if offerChips, Brain.shared.ready, Brain.shared.chipsEnabled {
+            // Not in Pisar's own windows: there the text is a setting, not a message.
+            let intoOurWindow = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == ProcessInfo.processInfo.processIdentifier
+            if offerChips, !intoOurWindow, Brain.shared.ready, Brain.shared.chipsEnabled {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                     guard self?.take == current else { return }
                     self?.showChipsMenu()

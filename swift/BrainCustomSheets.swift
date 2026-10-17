@@ -48,6 +48,8 @@ struct ChipsSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var items = Chips.all.map { Item(chip: $0) }
+    /// The hint about unfinished items waits for the first Save.
+    @State private var triedSave = false
 
     private var filled: [Chips.Chip] {
         items.map(\.chip)
@@ -86,7 +88,7 @@ struct ChipsSheet: View {
                 .disabled(items.map(\.chip) == Chips.standard)
                 Spacer()
             }
-            if unfinished {
+            if triedSave, unfinished {
                 Text(L("Заполни у каждого пункта и название, и что сделать.",
                        "Fill in both the name and what to do for every item."))
                     .font(.callout).foregroundStyle(sys(.systemRed))
@@ -95,11 +97,13 @@ struct ChipsSheet: View {
                 Spacer()
                 Button(L("Отменить", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(L("Сохранить", "Save")) {
+                    triedSave = true
+                    guard !unfinished else { return }
                     Chips.all = filled
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(unfinished || filled.isEmpty)
+                .disabled(filled.isEmpty)
             }
         }
         .padding(20)
