@@ -1179,7 +1179,15 @@ func installMainMenu() {
     let editItem = NSMenuItem()
     editItem.submenu = edit
 
+    // ⌘W закрывает окно так же, как крестик.
+    let window = NSMenu(title: L("Окно", "Window"))
+    window.addItem(NSMenuItem(title: L("Закрыть", "Close"),
+                              action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+    let windowItem = NSMenuItem()
+    windowItem.submenu = window
+
     app.addItem(appItem)
     app.addItem(editItem)
+    app.addItem(windowItem)
     NSApp.mainMenu = app
 }
